@@ -1,0 +1,10 @@
+__pycache__/
+*.egg-info/
+.venv/
+.*.stackcut/
+*.mp4
+*.mov
+*.wav
+*.sheet.jpg
+*.frames.jpg
+!docs/img/*

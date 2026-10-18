@@ -1,0 +1,104 @@
+"""stackcut: turn a screen recording + a talking-head take into a vertical short.
+
+  stackcut doctor                         check ffmpeg, encoders and Python packages
+  stackcut draft SCREEN FACE [-o edit.yaml]   transcribe, sync and write an automatic first edit
+  stackcut render edit.yaml [-o out.mp4]  render the edit (add --preview for a small fast file)
+  stackcut lines FACE                     the transcript as numbered sentences with times
+  stackcut frames SCREEN [--every 2]      a contact sheet of the screen recording (to pick zooms and blur)
+"""
+from __future__ import annotations
+
+import argparse
+import importlib
+import os
+import sys
+from pathlib import Path
+
+from . import __version__, edit, media, render, speech
+
+
+def cmd_doctor(_: argparse.Namespace) -> None:
+    ok = True
+    print(f"stackcut {__version__}")
+    print(f"  ffmpeg: {media.ffmpeg()}")
+    for f, why in (("scale_vt", "iPhone HDR tone-mapping on a Mac"), ("zscale", "HDR tone-mapping elsewhere"),
+                   ("sidechaincompress", "music ducking"), ("loudnorm", "loudness")):
+        print(f"  filter {f:18s} {'yes' if media.has_filter(f) else 'no ':3s}  ({why})")
+    enc = "h264_videotoolbox" if media.has_encoder("h264_videotoolbox") else "libx264"
+    print(f"  encoder {enc}")
+    if not media.has_encoder("libx264") and enc == "libx264":
+        print("  ! no H.264 encoder found"); ok = False
+    for mod in ("numpy", "cv2", "PIL", "faster_whisper", "yaml"):
+        try:
+            importlib.import_module(mod)
+            print(f"  python {mod:16s} ok")
+        except ImportError:
+            print(f"  ! python {mod} missing (pip install -e .)"); ok = False
+    import cv2
+    if not hasattr(cv2, "FaceDetectorYN"):
+        print("  ! OpenCV is too old for the YuNet face detector (need 4.8+)"); ok = False
+    print("  voice isolation:", "ElevenLabs (ELEVENLABS_API_KEY set)" if __import__("os").environ.get(
+        "ELEVENLABS_API_KEY") else "ffmpeg clean-up (set ELEVENLABS_API_KEY for AI isolation)")
+    sys.exit(0 if ok else 1)
+
+
+def cmd_lines(a: argparse.Namespace) -> None:
+    face = Path(a.face)
+    work = face.resolve().parent / f".{face.stem}.stackcut"
+    work.mkdir(exist_ok=True)
+    wav = media.extract_wav(face, work / "face16k.wav")
+    tr = speech.transcribe(wav, work / "transcript.json", a.model)
+    for s in speech.sentences(tr["words"]):
+        print(f"{s['i']:3d}  {s['start']:7.2f}-{s['end']:7.2f}  {s['text']}")
+
+
+def cmd_draft(a: argparse.Namespace) -> None:
+    screen_p, face_p = Path(a.screen), Path(a.face)
+    out = Path(a.out)
+    work = out.resolve().parent / f".{out.stem}.stackcut"
+    work.mkdir(exist_ok=True)
+    fwav = media.extract_wav(face_p, work / "face16k.wav")
+    tr = speech.transcribe(fwav, work / "transcript.json", a.model)
+    swav = media.extract_wav(screen_p, work / "screen16k.wav")
+    off, conf = speech.sync_offset(fwav, swav)
+    print(f"· sync: face = screen + {off:.2f} s (confidence {conf:.2f})")
+    rel = lambda p: os.path.relpath(os.path.abspath(p), os.path.dirname(os.path.abspath(out)))
+    edit.draft(rel(screen_p), rel(face_p), speech.sentences(tr["words"]), off, media.duration(screen_p), out,
+               speech.speech_runs(fwav))
+    print(f"✓ wrote {out}. Edit it (or ask your AI to), then: stackcut render {out}")
+
+
+def cmd_render(a: argparse.Namespace) -> None:
+    p = Path(a.edit)
+    out = Path(a.out) if a.out else p.with_suffix(".mp4")
+    render.render(p, out, a.model, a.preview)
+
+
+def cmd_frames(a: argparse.Namespace) -> None:
+    src = Path(a.screen)
+    out = Path(a.out) if a.out else src.with_suffix(".frames.jpg")
+    n = int(media.duration(src) / a.every) + 1
+    media.run([media.ffmpeg(), "-v", "error", "-y", "-i", str(src), "-vf",
+               f"fps={1 / a.every},scale=384:-2,tile=5x{(n + 4) // 5}", "-frames:v", "1",
+               str(out)])
+    print(f"✓ {out}  (one frame every {a.every} s, left to right, top to bottom)")
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(prog="stackcut", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--model", default="large-v3-turbo", help="whisper model (small is faster, large-v3-turbo better)")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("doctor").set_defaults(fn=cmd_doctor)
+    s = sub.add_parser("lines"); s.add_argument("face"); s.set_defaults(fn=cmd_lines)
+    s = sub.add_parser("draft"); s.add_argument("screen"); s.add_argument("face")
+    s.add_argument("-o", "--out", default="edit.yaml"); s.set_defaults(fn=cmd_draft)
+    s = sub.add_parser("render"); s.add_argument("edit"); s.add_argument("-o", "--out")
+    s.add_argument("--preview", action="store_true"); s.set_defaults(fn=cmd_render)
+    s = sub.add_parser("frames"); s.add_argument("screen"); s.add_argument("--every", type=float, default=2.0)
+    s.add_argument("-o", "--out"); s.set_defaults(fn=cmd_frames)
+    a = ap.parse_args()
+    a.fn(a)
+
+
+if __name__ == "__main__":
+    main()

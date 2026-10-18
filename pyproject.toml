@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stackcut"
+version = "0.1.0"
+description = "Screen recording + talking head -> a polished vertical short (styled screen on top, tracked face below, word-by-word captions). Built to be edited by an AI agent."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Seyed Hosseini" }, { name = "Claude (Anthropic)" }]
+dependencies = [
+  "numpy>=1.24",
+  "opencv-python-headless>=4.8,<5",
+  "pillow>=10",
+  "faster-whisper>=1.0",
+  "pyyaml>=6",
+]
+
+[project.scripts]
+stackcut = "stackcut.cli:main"
+
+[tool.setuptools]
+packages = ["stackcut"]
+
+[tool.setuptools.package-data]
+stackcut = ["assets/fonts/*"]

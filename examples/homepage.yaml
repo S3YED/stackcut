@@ -1,0 +1,20 @@
+# The edit behind "AI rebuilt my site overnight" (Seyed Hosseini, 18 Oct 2026), made with stackcut.
+# Sources: a Cap screen recording of getclark.app (screen.mp4) and an iPhone take of his face (face.mov),
+# recorded at the same time. Times are seconds in the FACE take.
+screen: screen.mp4
+face: face.mov
+offset: auto                  # measured from the audio: face = screen + 6.76 s
+hook: "AI rebuilt my site overnight 😳"
+style:
+  top_crop: 0.107             # the browser's tabs and address bar stay out of the full view
+fix: {stream: screen}         # whisper heard "home stream"
+lines:
+  - {from: 7.30, to: 12.24, zoom: full}                 # Nine hours ago I closed my laptop, and this morning I wake up and this is what I see:
+  - {from: 12.22, to: 17.88, zoom: [0.65, 0.40, 2.0], join: true}   # a completely redesigned, fully interactive particle effect home screen.
+  - {from: 17.88, to: 21.50, zoom: [0.32, 0.36, 1.9]}   # Guys, it's finished. It's over. AI can do all of this now.
+  - {from: 21.50, to: 25.68, zoom: [0.5, 0.55, 1.3]}    # But can you do AI? That's the biggest question you have to ask yourself.
+  - {from: 25.68, to: 33.46, zoom: full}                # Because if everybody else ... by just sleeping, what are you doing?
+  - {from: 33.46, to: 36.56, zoom: [0.5, 0.6, 1.5]}     # And if you're falling behind, that's not the position you want to be in.
+  - {from: 36.56, to: 41.24, zoom: [0.5, 0.6, 1.5]}     # If you're a business owner, entrepreneur, researcher, student, even if you're a mom,
+  - {from: 41.24, to: 45.74, zoom: full, join: true}    # getting into AI is going to be one of the most important decisions that you make this year.
+  - {from: 51.52, to: 55.40, zoom: [0.4, 0.42, 1.5]}    # If you want to know more how to make incredible stuff like this, follow me here for more.
