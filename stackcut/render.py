@@ -129,11 +129,18 @@ def render(edit_path: Path, out: Path, model: str = "large-v3-turbo", preview: b
     # 4. sound
     print("· sound")
     voice = audio.cut_voice(e.face, [(p.a, p.a + (p.t1 - p.t0)) for p in pieces], work / "voice.wav")
-    iso = audio.isolate(voice, work / "voice_isolated.mp3") if st["voice"] == "isolate" else None
-    fx = audio.sfx_track(media.duration(voice), work / "sfx.wav") if st.get("sfx", True) else None
+    cleaned = (audio.isolate(voice, work / "voice_isolated.mp3") if st["voice"] == "isolate" else
+               audio.denoise(voice, work / "voice_denoised.wav", float(st["denoise_db"])) if st["voice"] == "denoise"
+               else None)
     speed = float(st.get("speed", 1.0))
-    mix = audio.master(voice, work / "mix.wav", e.music, float(st["music_lufs"]), iso, fx,
-                       chain="clean" if st["voice"] == "clean" else "light", speed=speed)
+    mix = work / "mix.wav"
+    levels = audio.master(voice, mix, e.music, float(st["music_lufs"]), cleaned, bool(st.get("sfx", True)),
+                          chain="clean" if st["voice"] == "clean" else "light", speed=speed,
+                          music_start=float(st["music_start"]), duck_db=float(st["music_duck_db"]),
+                          mid_cut_db=float(st["music_mid_cut_db"]))
+    if "bed_lufs" in levels:
+        print(f"  voice {levels['voice_lufs']:.1f} LUFS, music bed {levels['bed_lufs']:.1f} LUFS "
+              f"({levels['voice_lufs'] - levels['bed_lufs']:.0f} dB under the voice)")
 
     # 5. picture
     print("· picture")

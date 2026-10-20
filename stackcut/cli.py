@@ -11,10 +11,12 @@ from __future__ import annotations
 import argparse
 import importlib
 import os
+import platform
+import shutil
 import sys
 from pathlib import Path
 
-from . import __version__, edit, media, render, speech
+from . import __version__, audio, edit, media, render, speech
 
 
 def cmd_doctor(_: argparse.Namespace) -> None:
@@ -37,8 +39,10 @@ def cmd_doctor(_: argparse.Namespace) -> None:
     import cv2
     if not hasattr(cv2, "FaceDetectorYN"):
         print("  ! OpenCV is too old for the YuNet face detector (need 4.8+)"); ok = False
-    print("  voice isolation:", "ElevenLabs (ELEVENLABS_API_KEY set)" if __import__("os").environ.get(
-        "ELEVENLABS_API_KEY") else "ffmpeg clean-up (set ELEVENLABS_API_KEY for AI isolation)")
+    df = shutil.which("deep-filter") or audio.DEEPFILTER_BUILDS.get((platform.system(), platform.machine()))
+    print("  noise removal (voice: denoise):", "DeepFilterNet" + ("" if shutil.which("deep-filter") else
+          " (downloads on first use)") if df else "not available here: put `deep-filter` on PATH, or use voice: light")
+    print("  voice: isolate:", "ElevenLabs key set" if os.environ.get("ELEVENLABS_API_KEY") else "needs ELEVENLABS_API_KEY")
     sys.exit(0 if ok else 1)
 
 

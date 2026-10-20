@@ -1,8 +1,14 @@
-"""Sound: the cut voice track, an optional AI voice clean-up, a ducked music bed, -14 LUFS master."""
+"""Sound: the cut voice track, noise removal that keeps the voice natural, a ducked music bed,
+-14 LUFS master."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import platform
+import shutil
+import subprocess
+import tempfile
 import urllib.request
 import wave
 from pathlib import Path
@@ -50,15 +56,68 @@ def isolate(src: Path, out: Path) -> Path | None:
         return None
 
 
+DEEPFILTER = "https://github.com/Rikorose/DeepFilterNet/releases/download/v0.5.6/"
+DEEPFILTER_BUILDS = {   # DeepFilterNet 3 (MIT / Apache-2.0) command-line builds, checksums pinned
+    ("Darwin", "arm64"): ("deep-filter-0.5.6-aarch64-apple-darwin",
+                          "4601e7f4e4c03e59a4c5b5000216ef3add3e808799cfccd95e14e83ea4611081"),
+    ("Linux", "x86_64"): ("deep-filter-0.5.6-x86_64-unknown-linux-musl",
+                          "70775e251eee44c0f2451a1e833326cf8bcbbe304d3e7cd12851e6fce72ef7da"),
+    ("Linux", "aarch64"): ("deep-filter-0.5.6-aarch64-unknown-linux-gnu",
+                           "14e02a1c0028f3ca0bdf83b62b3336e56ba0556894ef295a95e8573f06557166"),
+}
+
+
+def deep_filter() -> str | None:
+    """The DeepFilterNet binary: `deep-filter` on PATH, or the official release fetched once into
+    ~/.cache/stackcut/bin (checksum checked). None on a platform without a pinned build."""
+    on_path = shutil.which("deep-filter")
+    if on_path:
+        return on_path
+    build = DEEPFILTER_BUILDS.get((platform.system(), platform.machine()))
+    if not build:
+        return None
+    name, sha = build
+    path = Path.home() / ".cache" / "stackcut" / "bin" / name
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        print(f"  downloading the DeepFilterNet denoiser ({name}, about 30 MB, once)")
+        urllib.request.urlretrieve(DEEPFILTER + name, path)
+    if hashlib.sha256(path.read_bytes()).hexdigest() != sha:
+        path.unlink()
+        raise SystemExit(f"DeepFilterNet checksum mismatch; delete {path} and try again")
+    path.chmod(0o755)
+    return str(path)
+
+
+def denoise(src: Path, out: Path, limit_db: float = 24.0) -> Path | None:
+    """Room noise out, voice untouched: DeepFilterNet 3 at 48 kHz. limit_db caps the noise
+    reduction by mixing a little of the original back in, so the voice keeps its air and breath
+    and the pauses never go to dead silence. None when no build is available."""
+    exe = deep_filter()
+    if exe is None:
+        print("  no DeepFilterNet build for this machine; put `deep-filter` on PATH. Using the mic as is.")
+        return None
+    with tempfile.TemporaryDirectory() as tmp:
+        mono = Path(tmp) / "voice.wav"
+        media.run([media.ffmpeg(), "-v", "error", "-y", "-i", str(src), "-ac", "1", "-ar", "48000",
+                   "-c:a", "pcm_s16le", str(mono)])
+        subprocess.run([exe, "-D", "-a", f"{limit_db:g}", "-o", str(Path(tmp) / "out"), str(mono)],
+                       check=True, capture_output=True)
+        shutil.move(str(Path(tmp) / "out" / "voice.wav"), out)
+    print(f"  room noise removed with DeepFilterNet (limit {limit_db:g} dB)")
+    return out
+
+
 VOICE_CHAINS = {
-    # the microphone's own sound: rumble cut, a little presence, gentle compression (a DJI or lavalier mic)
+    # the microphone's own sound: rumble cut, a little presence, gentle compression, a soft de-ess
     "light": "highpass=f=70,equalizer=f=4500:t=q:w=1.2:g=1.5,acompressor=threshold=-18dB:ratio=2:attack=10:"
-             "release=150:makeup=2",
-    # a phone or laptop mic in a noisy room: denoise, less mud, de-ess, firmer compression
+             "release=150:makeup=2,deesser=i=0.25:m=0.5:f=0.5",
+    # a phone or laptop mic: FFmpeg denoise, less mud, firmer compression, de-ess
     "clean": "highpass=f=80,afftdn=nf=-25,equalizer=f=250:t=q:w=1.2:g=-2.5,equalizer=f=3500:t=q:w=1.0:g=2,"
              "equalizer=f=9000:t=h:w=1:g=1.5,deesser=i=0.3,acompressor=threshold=-20dB:ratio=3:attack=8:release=120:"
              "makeup=3",
 }
+DENOISED_AIR = ",equalizer=f=7000:t=h:w=0.7:g=2"   # gives back the ~2 dB of 4-10 kHz the denoiser takes
 TARGET_LUFS, CEILING = -14.0, 10 ** (-1.5 / 20)   # Reels/TikTok loudness, true-peak ceiling -1.5 dB
 
 
@@ -94,42 +153,73 @@ def sfx_track(dur: float, out: Path, sr: int = 48000) -> Path:
     return out
 
 
-def master(voice: Path, out: Path, music: Path | None = None, music_lufs: float = -26.0,
-           isolated: Path | None = None, sfx: Path | None = None, chain: str = "light", speed: float = 1.0) -> Path:
-    """The voice through its chain and set to -14 LUFS; under it the music bed at `music_lufs` (looped,
-    faded, side-chain ducked) and the sound cues; then one fixed gain and a peak limiter for the whole
-    mix (no level pumping). speed: the finished mix a touch faster, pitch kept."""
-    dur = media.duration(voice)
-    v_proc = out.with_suffix(".voice.wav")
-    media.run([media.ffmpeg(), "-v", "error", "-y", "-i", str(isolated or voice), "-af",
-               f"{VOICE_CHAINS[chain]},aresample=48000", "-ac", "2", "-c:a", "pcm_s24le", str(v_proc)])
-    args = [media.ffmpeg(), "-v", "error", "-y", "-i", str(v_proc)]
-    mixes, filt = ["[v]"], f"[0:a]volume={TARGET_LUFS - loudness(v_proc):.2f}dB"
-    if music:
-        args += ["-stream_loop", "-1", "-i", str(music)]
-        filt += (",asplit=2[v][sc];"
-                 f"[1:a]aresample=48000,atrim=0:{dur:.3f},volume={music_lufs - loudness(music):.2f}dB,"
-                 f"afade=t=in:d=0.4,afade=t=out:st={max(0.0, dur - 1.2):.3f}:d=1.2[m];"
-                 "[m][sc]sidechaincompress=threshold=0.05:ratio=6:attack=20:release=300[md]")
-        mixes.append("[md]")
-    else:
-        filt += "[v]"
-    if sfx:
-        args += ["-i", str(sfx)]
-        filt += f";[{len(mixes)}:a]aresample=48000[fx]"
-        mixes.append("[fx]")
+def _read(path: Path) -> np.ndarray:
+    raw = subprocess.run([media.ffmpeg(), "-v", "error", "-i", str(path), "-ac", "2", "-ar", "48000", "-f", "f32le", "-"],
+                         capture_output=True, check=True).stdout
+    return np.frombuffer(raw, np.float32).reshape(-1, 2).copy()
+
+
+def _write(x: np.ndarray, path: Path) -> Path:
+    p = subprocess.run([media.ffmpeg(), "-v", "error", "-y", "-f", "f32le", "-ar", "48000", "-ac", "2", "-i", "-",
+                        "-c:a", "pcm_f32le", str(path)], input=x.astype(np.float32).tobytes())
+    if p.returncode:
+        raise SystemExit(f"could not write {path.name}")
+    return path
+
+
+def duck_curve(voice: np.ndarray, depth_db: float, attack: float = 0.08, release: float = 0.4) -> np.ndarray:
+    """Per-sample gain (dB) for the music: down `depth_db` while the voice talks, back up in the
+    pauses (the beat after the hook, the end), with a quick attack and a slow release."""
+    hop = 480   # 10 ms
+    mono = voice.mean(1)
+    n = len(mono) // hop
+    db = 20 * np.log10(np.sqrt((mono[: n * hop].reshape(n, hop) ** 2).mean(1)) + 1e-9)
+    talking = (db > np.percentile(db, 95) - 30).astype(np.float32)
+    env, a, r = np.zeros(n, np.float32), 1 - np.exp(-0.01 / attack), 1 - np.exp(-0.01 / release)
+    for i in range(n):
+        prev = env[i - 1] if i else talking[0]
+        env[i] = prev + (a if talking[i] > prev else r) * (talking[i] - prev)
+    curve = np.interp(np.arange(len(mono)), np.arange(n) * hop + hop / 2, env)
+    return -depth_db * curve
+
+
+def master(voice: Path, out: Path, music: Path | None = None, music_lufs: float = -32.0,
+           cleaned: Path | None = None, sfx: bool = True, chain: str = "light", speed: float = 1.0,
+           music_start: float = 0.0, duck_db: float = 4.0, mid_cut_db: float = 4.0) -> dict:
+    """The voice (cleaned or the mic as is) through its chain, sped up if asked, set to -14 LUFS.
+    Under it the music bed: its 1-4 kHz scooped out so it never sits on the voice, at `music_lufs`
+    in the pauses and `duck_db` lower while he talks. Then the sound cues, one fixed gain and a
+    peak limiter for the whole mix (no level pumping). Returns the loudness of the parts."""
+    work = out.parent
     tempo = f",atempo={speed}" if abs(speed - 1.0) > 1e-3 else ""
-    filt += (f";{''.join(mixes)}amix=inputs={len(mixes)}:normalize=0{tempo}[out]" if len(mixes) > 1
-             else f";[v]anull{tempo}[out]")
-    raw = out.with_suffix(".raw.wav")
-    media.run(args + ["-filter_complex", filt, "-map", "[out]", "-t", f"{dur / speed:.3f}", "-ar", "48000",
-                      "-ac", "2", "-c:a", "pcm_s24le", str(raw)])
+    air = DENOISED_AIR if cleaned is not None else ""
+    v_path = work / "voice_chain.wav"
+    media.run([media.ffmpeg(), "-v", "error", "-y", "-i", str(cleaned or voice), "-af",
+               f"{VOICE_CHAINS[chain]}{air}{tempo},aresample=48000", "-ac", "2", "-c:a", "pcm_f32le", str(v_path)])
+    v = _read(v_path) * 10 ** ((TARGET_LUFS - loudness(v_path)) / 20)
+    dur = len(v) / 48000
+    mix, report = v.copy(), {"voice_lufs": TARGET_LUFS}
+    if music:
+        b_path = work / "bed.wav"
+        media.run([media.ffmpeg(), "-v", "error", "-y", "-ss", f"{music_start:.3f}", "-stream_loop", "-1", "-i", str(music),
+                   "-t", f"{dur:.3f}", "-af", f"aresample=48000,highpass=f=60,"
+                   f"equalizer=f=2000:t=o:w=2:g=-{mid_cut_db:g},afade=t=in:d=0.4,"
+                   f"afade=t=out:st={max(0.0, dur - 0.6):.3f}:d=0.6", "-ac", "2", "-c:a", "pcm_f32le", str(b_path)])
+        bed = _read(b_path)[: len(v)] * 10 ** ((music_lufs - loudness(b_path)) / 20)
+        bed = bed * (10 ** (duck_curve(v, duck_db)[: len(bed)] / 20))[:, None]
+        mix[: len(bed)] += bed
+        report["bed_lufs"] = loudness(_write(bed, work / "bed_mixed.wav"))
+    if sfx:
+        fx = _read(sfx_track(dur, work / "sfx.wav"))[: len(v)]
+        mix[: len(fx)] += fx
+    raw = _write(mix, work / "mix_raw.wav")
     media.run([media.ffmpeg(), "-v", "error", "-y", "-i", str(raw), "-af",
                f"volume={TARGET_LUFS - loudness(raw):.2f}dB,alimiter=limit={CEILING:.4f}:attack=5:release=60:"
                "level=disabled", "-ar", "48000", "-c:a", "pcm_s24le", str(out)])
-    raw.unlink()
-    v_proc.unlink()
-    return out
+    report["mix_lufs"] = loudness(out)
+    for tmp in (v_path, raw, work / "bed.wav", work / "bed_mixed.wav", work / "sfx.wav"):
+        tmp.unlink(missing_ok=True)
+    return report
 
 
 def loudness(path: Path) -> float:

@@ -1,18 +1,19 @@
-# stackcut edit-bestand: "Deze video is door AI gemonteerd" (Seyed, 20 okt 2026, Nederlands)
-# Geschreven door Claude (de AI-editor) uit het transcript. Tijden = seconden in de gezichtsopname.
+# stackcut edit-bestand, geschreven door Claude (de AI-editor) uit het transcript. Tijden: gezichtsopname.
 screen: src/screen-plus-edit.mp4      # de schermopname, daarna dit bestand in beeld (vanaf 150.3 s)
 face: src/face.mp4
 offset: 1.81                          # gezicht = scherm + 1.81 s, gemeten aan het geluid
 hook: "Deze video is door AI gemonteerd 🤖"
-music: src/bed.mp3
+music: src/ambient.flac              # Eleven Music (ElevenLabs), gemaakt op 20 okt 2026
 style:
   top_crop: 0.107                     # tabbladen en adresbalk blijven buiten beeld
-  music_lufs: -28
   tightness: tight                    # elke stilte eruit
   punch: true                         # het gezicht zoomt in op kernwoorden
   face_grade: {brightness: 0.05, warmth: 0.03, eyes: 0.08}
   speed: 1.07                         # iets sneller, de stem blijft even hoog
-  voice: light                        # het eigen geluid van de DJI-microfoon
+  voice: denoise                      # DJI-microfoon: ruis eruit, de stem blijft natuurlijk
+  music_lufs: -32                     # zachte ambient, 18 dB onder de stem
+  music_duck_db: 4                    # zakt weg als ik praat
+  music_mid_cut_db: 6                 # 1-4 kHz eruit: botst niet met de stem
 privacy:
   - {rect: [990, 560, 535, 440], from: 0, to: 59}     # reacties van anderen
   - {rect: [990, 560, 535, 440], from: 78, to: 87}

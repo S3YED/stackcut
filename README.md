@@ -21,7 +21,7 @@ stackcut does all of that from two files. You record your screen and, at the sam
 - **Every pause gone.** Voice-activity detection turns breaths and "uhm"s into jump cuts.
 - **Captions that pop.** Word by word, a few words at a time, the keyword highlighted.
 - **A hook on top.** One line, in the text-sticker style viewers already know.
-- **Sound that's ready.** Your mic's own voice (or a clean-up for a poor mic), optional ducked music bed, mastered to -14 LUFS (the Reels/TikTok target).
+- **Sound that's ready.** Room noise removed without making the voice sound processed, an optional music bed that dips while you talk and stays out of the voice's frequencies, mastered to -14 LUFS (the Reels/TikTok target).
 - **Privacy built in.** Blur boxes on the screen recording with time windows, for client names and messages.
 
 ![Before and after](docs/img/before-after.jpg)
@@ -103,8 +103,12 @@ lines:                            # face-take seconds, in the order they play
 | `speed` | 1.05-1.1 lifts a slow delivery. The pitch stays the same. |
 | `punch` | The face steps in a little on key words, at most every 2.2 s, so jump cuts read as beats. |
 | `face_grade` | `{brightness, warmth, eyes}`, each about 0.03-0.08: a brighter, warmer face and a little light on the eyes. |
-| `voice` | `light` (default): your mic's own sound, gently compressed. `clean`: denoise a phone or laptop mic. `isolate`: ElevenLabs Voice Isolator (needs `ELEVENLABS_API_KEY`). |
-| `music_lufs` | Loudness of the music bed under a -14 LUFS voice (about -28 is a soft bed). |
+| `voice` | `denoise` (default): room noise out with DeepFilterNet, the voice itself untouched. `light`: the mic as is, gently compressed. `clean`: FFmpeg denoise for a poor mic. `isolate`: ElevenLabs Voice Isolator (needs `ELEVENLABS_API_KEY`; it gates pauses to silence and reshapes the voice). |
+| `denoise_db` | The most noise `denoise` may remove (default 24 dB). The rest of the original is mixed back in, so breaths and consonants stay and pauses never go dead. |
+| `music_lufs` | The bed's loudness in the pauses, under a -14 LUFS voice (default -32: 18 dB under). |
+| `music_duck_db` | How far the bed dips while you talk (default 4 dB), coming back up in the pauses. |
+| `music_mid_cut_db` | How much of 1-4 kHz is scooped out of the bed so it never sits on the voice (default 4 dB). |
+| `music_start` | Skip a track's quiet intro (seconds). |
 | `sfx` | A soft impact on the first frame and small pops on the hook and the end (synthesised, nothing to license). |
 
 Full examples: [`examples/homepage.yaml`](examples/homepage.yaml) (English), [`examples/whatsapp-nl.yaml`](examples/whatsapp-nl.yaml) (Dutch, with a blurred client screen), and the launch videos [`examples/stackcut-launch.yaml`](examples/stackcut-launch.yaml) and [`examples/stackcut-launch-nl.yaml`](examples/stackcut-launch-nl.yaml) (a tired take made tight: best takes, speed, punch-ins, face grade).
@@ -126,7 +130,7 @@ face.mov ───┘                      └─ transcript (Whisper) ─ silen
 4. **Frame the screen.** The screen recording goes in a rounded window with a soft shadow on a blurred gradient. For each line the camera eases (0.6 s, cubic) to that line's target, which you choose or `auto` measures from frame differences.
 5. **Frame the face.** YuNet finds the face 10 times a second. The centre is smoothed over about 1.3 s and the size over about 3 s, so it never jitters. The face fills about a third of the panel. The white shirt under it sets the white balance.
 6. **Captions.** Words land on the output timeline, a few per page; spoken words light up and the keyword gets the accent pill.
-7. **Sound.** The kept audio is cut with 12 ms fades and keeps your mic's own sound (a gentle compressor; `voice: clean` or `isolate` for a poor mic). The voice is set to -14 LUFS, the music bed goes under it at `music_lufs`, ducked while you talk, and the mix gets one fixed gain and a peak limiter: no level pumping. Speed changes happen on the finished mix, so the sound is encoded once (AAC 320 kb/s).
+7. **Sound.** The kept audio is cut with 12 ms fades. [DeepFilterNet](https://github.com/Rikorose/DeepFilterNet) takes the room noise out at 48 kHz with an attenuation limit, so the voice keeps its air (it beat a cloud voice isolator in our tests: the waveform stays 0.96 correlated with the mic, against 0.64). A gentle compressor, a little presence and a soft de-esser follow, then the voice is set to -14 LUFS. The music bed has its 1-4 kHz scooped out, sits at `music_lufs` in the pauses and dips `music_duck_db` while you talk. The mix gets one fixed gain and a peak limiter: no level pumping. Speed changes happen on the voice before mixing, so the sound is encoded once (AAC 320 kb/s).
 8. **Encode.** H.264 1080x1920, 30 fps (hardware VideoToolbox on a Mac, x264 elsewhere), plus a contact sheet to review.
 
 ## Recording tips
@@ -151,6 +155,7 @@ It stands on these open-source projects:
 | [YuNet](https://github.com/opencv/opencv_zoo/tree/main/models/face_detection_yunet) by Shiqi Yu (OpenCV Zoo) | face detection (downloaded on first run) | MIT |
 | [NumPy](https://numpy.org), [Pillow](https://python-pillow.org), [PyYAML](https://pyyaml.org) | arrays, text drawing, the edit file | BSD / MIT-CMU / MIT |
 | [Geist](https://github.com/vercel/geist-font) by Vercel | caption and sticker font (bundled) | SIL OFL 1.1 |
+| [DeepFilterNet](https://github.com/Rikorose/DeepFilterNet) by Hendrik Schröter | room noise removal (its command-line build, downloaded on first use, checksum pinned) | MIT / Apache 2.0 |
 
 The screen look is inspired by [OpenScreen](https://github.com/siddharthvaddem/openscreen) and Screen Studio. The example videos were recorded with [Cap](https://cap.so).
 

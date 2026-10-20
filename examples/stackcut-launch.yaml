@@ -1,19 +1,19 @@
-# stackcut edit file: "My AI edited this whole video" (Seyed Hosseini, 20 Oct 2026, English)
-# Written by Claude (the AI editor) from the transcript, rendered with stackcut.
-# Times are seconds in the FACE take.
+# stackcut edit file, written by Claude (the AI editor) from the transcript. Times are in the face take.
 screen: src/screen-plus-edit.mp4      # the screen recording, then this file on screen (from 131.3 s)
 face: src/face.mp4
 offset: -4.29                         # face = screen - 4.29 s, measured from the audio
 hook: "My AI edited this whole video 🤖"
-music: src/bed.mp3
+music: src/ambient.flac              # Eleven Music (ElevenLabs), made on 20 Oct 2026
 style:
   top_crop: 0.107                     # browser tabs and address bar stay out of frame
-  music_lufs: -28
   tightness: tight                    # about 0.08 s between words: every pause cut
   punch: true                         # the face steps in on key words
   face_grade: {brightness: 0.05, warmth: 0.03, eyes: 0.08}
   speed: 1.07                         # a touch faster, pitch kept
-  voice: light                        # the DJI mic's own sound, no AI clean-up
+  voice: denoise                      # the DJI mic, room noise out, voice natural
+  music_lufs: -32                     # a soft ambient bed, 18 dB under the voice
+  music_duck_db: 4                    # dips while I talk
+  music_mid_cut_db: 6                 # 1-4 kHz scooped out: no clash with the voice
 privacy:
   - {rect: [985, 150, 535, 1070], from: 30, to: 63}     # Instagram comments: other people
   - {rect: [1760, 1150, 120, 60], from: 0, to: 63}      # Instagram message avatars

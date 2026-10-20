@@ -18,16 +18,21 @@ DEFAULT_STYLE = {
     "white_balance": 0.5,                                 # 0 = off, 1 = fully neutral (white shirt reference)
     "caption_words": 3,
     "caption_chars": 16,
-    "music_lufs": -26,
+    "music_lufs": -32,                                    # the bed in the pauses, under a -14 LUFS voice
+    "music_start": 0.0,                                   # skip a track's quiet intro (seconds)
+    "music_duck_db": 4,                                   # how far the bed dips while you talk
+    "music_mid_cut_db": 4,                                # 1-4 kHz scooped out of the bed: it never sits on the voice
     "sfx": True,                                          # soft impact on the first frame, pops on the hook and the end
     "tightness": "normal",                                # "tight": about 0.08 s between words at every cut
     "punch": False,                                       # face zooms in a little on key words (keeps a tired take moving)
     "face_grade": {"brightness": 0.0, "warmth": 0.0, "eyes": 0.0},   # e.g. 0.06 / 0.04 / 0.08 for a dim room
     "speed": 1.0,                                         # 1.05-1.1 lifts a slow delivery; pitch stays the same
-    "voice": "light",                                     # "light": the mic's own sound; "clean": denoise a poor mic;
+    "voice": "denoise",                                   # "denoise": room noise out, voice untouched (DeepFilterNet);
+                                                          # "light": the mic as is; "clean": FFmpeg denoise for a poor mic;
                                                           # "isolate": ElevenLabs Voice Isolator (ELEVENLABS_API_KEY)
+    "denoise_db": 24,                                     # most noise "denoise" may remove; lower keeps more room air
 }
-VOICES = ("light", "clean", "isolate")
+VOICES = ("denoise", "light", "clean", "isolate")
 
 
 @dataclass

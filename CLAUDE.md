@@ -33,7 +33,7 @@ Cut:
 
 Target 35-50 s. If the draft runs long, drop the weakest feature line first.
 
-For a tired or slow take: `style: {tightness: tight, speed: 1.07, punch: true, face_grade: {brightness: 0.05, warmth: 0.03, eyes: 0.08}}`, and `beat: 0.3` on the hook line. Keep `voice: light` with a good mic (DJI, lavalier): its own sound beats any clean-up.
+For a tired or slow take: `style: {tightness: tight, speed: 1.07, punch: true, face_grade: {brightness: 0.05, warmth: 0.03, eyes: 0.08}}`, and `beat: 0.3` on the hook line. Keep `voice: denoise` (the default): it takes the room out and leaves the voice alone. Don't use `isolate` for a good mic (DJI, lavalier): it reshapes the voice. A music bed: instrumental, no drums or vocals, `music_lufs` about -32, `music_mid_cut_db: 6` so it never clashes with the voice. Never ship a generated track in the repo.
 
 ## 3. Pick what the screen shows
 For every line, set `zoom`:
