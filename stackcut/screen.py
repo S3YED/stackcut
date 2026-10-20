@@ -67,13 +67,15 @@ def ease(x: float) -> float:
     return 4 * x ** 3 if x < 0.5 else 1 - (-2 * x + 2) ** 3 / 2
 
 
-def view(frame: np.ndarray, cx: float, cy: float, z: float, ww: int, wh: int) -> np.ndarray:
+def view(frame: np.ndarray, cx: float, cy: float, z: float, ww: int, wh: int, top: float = 0.0) -> np.ndarray:
     """The part of the screen the camera sees, scaled into the window.
-    cx, cy: centre as fractions of the frame; z: zoom (1 = whole screen)."""
+    cx, cy: centre as fractions of the frame; z: zoom (1 = whole screen).
+    top: a fraction of the frame's top that never shows (a browser's tabs and address bar)."""
     sh, sw = frame.shape[:2]
+    z = max(z, 1 / (1 - top)) if top else z
     w, h = sw / z, sh / z
     x0 = min(max(cx * sw - w / 2, 0), sw - w)
-    y0 = min(max(cy * sh - h / 2, 0), sh - h)
+    y0 = min(max(cy * sh - h / 2, top * sh), sh - h)
     s = ww / w
     src, k = frame, 1.0
     while s * k < 0.75:      # shrink with area filtering first: no shimmering text when zoomed out

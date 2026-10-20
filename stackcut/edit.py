@@ -63,6 +63,9 @@ def load(path: Path) -> Edit:
     style = dict(DEFAULT_STYLE)
     style.update(d.get("style") or {})
     music = d.get("music")
+    for key in ("screen", "face") + (("music",) if music else ()):
+        if not (root / d[key]).exists():
+            raise SystemExit(f"{path.name}: {key} file not found: {root / d[key]}")
     return Edit(root, (root / d["screen"]).resolve(), (root / d["face"]).resolve(), lines, d.get("hook") or "",
                 d.get("offset", "auto"), (root / music).resolve() if music else None, d.get("privacy") or [], style,
                 {str(k).lower(): str(v) for k, v in (d.get("fix") or {}).items()})

@@ -117,8 +117,8 @@ def render(edit_path: Path, out: Path, model: str = "large-v3-turbo", preview: b
             words.append(speech.Word(text, a, max(a + 0.08, b)))
         nxt = pieces[k + 1] if k + 1 < len(pieces) else None
         joined = nxt is not None and (nxt.line == p.line or e.lines[nxt.line].join)
-        if words and not joined and not re.search(r"[.?!,]$", words[-1].text):
-            words[-1].text += "."
+        if words and not joined and not re.search(r"[.?!]$", words[-1].text):
+            words[-1].text = re.sub(r"[,;:]+$", "", words[-1].text) + "."   # a line that ends mid-sentence ends here
     pages = captions.paginate(words, int(st["caption_words"]), int(st["caption_chars"]))
     (work / "words.json").write_text(json.dumps([{"t": w.text, "s": round(w.start, 2), "e": round(w.end, 2)}
                                                   for w in words], ensure_ascii=False))
@@ -176,7 +176,7 @@ def render(edit_path: Path, out: Path, model: str = "large-v3-turbo", preview: b
                     rects = [r for r, a, b in blurs if a <= s_t <= b]
                     if rects:
                         sf = screen.blur(sf, rects)
-                    win.draw(canvas, screen.view(sf, *cam, win.w, win.h))
+                    win.draw(canvas, screen.view(sf, *cam, win.w, win.h, top_crop))
                 if ff is not None:
                     fpanel = face.panel(face.apply_lut(ff, lut), cam_track.at(p.a + k / FPS), W, H - FACE_TOP,
                                         float(st["face_fill"])).astype(np.float32)
