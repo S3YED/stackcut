@@ -1,0 +1,33 @@
+# stackcut edit-bestand: "Deze video is door AI gemonteerd" (Seyed, 20 okt 2026, Nederlands)
+# Geschreven door Claude (de AI-editor) uit het transcript. Tijden = seconden in de gezichtsopname.
+screen: src/screen-plus-edit.mp4      # de schermopname, daarna dit bestand in beeld (vanaf 150.3 s)
+face: src/face.mp4
+offset: 1.81                          # gezicht = scherm + 1.81 s, gemeten aan het geluid
+hook: "Deze video is door AI gemonteerd 🤖"
+music: src/bed.mp3
+style:
+  top_crop: 0.107                     # tabbladen en adresbalk blijven buiten beeld
+  music_lufs: -28
+  tightness: tight                    # elke stilte eruit
+  punch: true                         # het gezicht zoomt in op kernwoorden
+  face_grade: {brightness: 0.05, warmth: 0.03, eyes: 0.08}
+  speed: 1.07                         # iets sneller, de stem blijft even hoog
+  voice: light                        # het eigen geluid van de DJI-microfoon
+privacy:
+  - {rect: [990, 560, 535, 440], from: 0, to: 59}     # reacties van anderen
+  - {rect: [990, 560, 535, 440], from: 78, to: 87}
+  - {rect: [1770, 1160, 100, 50], from: 0, to: 87}    # avatars bij Berichten
+fix: {zou: Ik zou, stackcut: stackcut, github: GitHub, cloudcode: Claude Code, godad: Codex}
+lines:
+  - {from: 51.60, to: 54.22, zoom: [0.36, 0.42, 1.9], beat: 0.3}                       # hook: de sterkste take
+  - {from: 54.50, to: 56.32, zoom: [0.36, 0.72, 2.2]}                                  # Maar vandaag ... met AI.
+  - {from: 56.50, to: 57.66, zoom: [0.5, 0.55, 1.25]}                                  # Hiervoor zie je een video.
+  - {from: 67.30, to: 71.92, zoom: [0.38, 0.45, 1.6]}                                  # 3e take, de vlotste
+  - {from: 75.18, to: 78.14, zoom: [0.38, 0.70, 2.0], join: true}                      # ... een paar minuten
+  - {from: 89.80, to: 96.22, zoom: [0.41, 0.53, 1.9]}                                  # Dit video format ...
+  - {from: 96.90, to: 98.10, zoom: [0.41, 0.32, 2.4]}                                  # Daarom heb ik stackcut
+  - {from: 98.24, to: 104.86, zoom: [0.48, 0.42, 1.45], join: true}                    # gratis open source repo
+  - {from: 116.25, to: 120.76, zoom: [0.30, 0.39, 1.8], screen_at: 150.6}              # twee video's: dit bestand
+  - {from: 121.05, to: 122.55, zoom: [0.30, 0.52, 1.8], screen_at: 151.0}              # De animaties, de captions
+  - {from: 125.40, to: 126.98, zoom: [0.35, 0.78, 1.6], screen_at: 151.5, join: true}  # ... automatisch
+  - {from: 142.30, to: 148.06, zoom: full}                                             # volg me

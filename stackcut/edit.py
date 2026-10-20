@@ -19,7 +19,15 @@ DEFAULT_STYLE = {
     "caption_words": 3,
     "caption_chars": 16,
     "music_lufs": -26,
+    "sfx": True,                                          # soft impact on the first frame, pops on the hook and the end
+    "tightness": "normal",                                # "tight": about 0.08 s between words at every cut
+    "punch": False,                                       # face zooms in a little on key words (keeps a tired take moving)
+    "face_grade": {"brightness": 0.0, "warmth": 0.0, "eyes": 0.0},   # e.g. 0.06 / 0.04 / 0.08 for a dim room
+    "speed": 1.0,                                         # 1.05-1.1 lifts a slow delivery; pitch stays the same
+    "voice": "light",                                     # "light": the mic's own sound; "clean": denoise a poor mic;
+                                                          # "isolate": ElevenLabs Voice Isolator (ELEVENLABS_API_KEY)
 }
+VOICES = ("light", "clean", "isolate")
 
 
 @dataclass
@@ -32,6 +40,7 @@ class Line:
     tight: bool = True                # cut pauses and breaths inside the line
     pad_in: float | None = None       # extra lead-in for a soft first word ("I", "If")
     cut: bool = False                 # jump to the zoom instead of easing
+    beat: float = 0.0                 # hold this much of the take's own pause after the line (after a hook)
 
 
 @dataclass
@@ -57,11 +66,16 @@ def load(path: Path) -> Edit:
             raise SystemExit(f"line {i + 1} in {path.name} needs 'from' and 'to' (face-take seconds)")
         lines.append(Line(float(l["from"]), float(l["to"]), l.get("zoom", "auto"), l.get("screen_at"),
                           bool(l.get("join", False)), bool(l.get("tight", True)), l.get("pad_in"),
-                          bool(l.get("cut", False))))
+                          bool(l.get("cut", False)), float(l.get("beat", 0.0))))
     if not lines:
         raise SystemExit(f"{path.name} has no lines")
     style = dict(DEFAULT_STYLE)
     style.update(d.get("style") or {})
+    style["face_grade"] = {**DEFAULT_STYLE["face_grade"], **(style.get("face_grade") or {})}
+    if not 0.8 <= float(style["speed"]) <= 1.25:
+        raise SystemExit(f"{path.name}: style.speed {style['speed']} is outside 0.8-1.25")
+    if style["voice"] not in VOICES:
+        raise SystemExit(f"{path.name}: style.voice must be one of {', '.join(VOICES)}")
     music = d.get("music")
     for key in ("screen", "face") + (("music",) if music else ()):
         if not (root / d[key]).exists():
@@ -102,6 +116,7 @@ def draft(screen: str, face: str, sents: list[dict], offset: float, screen_dur: 
     out.write_text(f"""# stackcut edit file. Times are seconds in the FACE take.
 # zoom: full | auto | [cx, cy, z]   (cx, cy = centre as fractions of the screen, z >= 1)
 # screen_at: show this screen moment instead of the synced one.  join: the sentence continues.
+# beat: seconds of pause held after a line (one short beat after the hook lands).
 screen: {screen}
 face: {face}
 offset: {offset:.2f}          # face time = screen time + offset (measured from the audio)

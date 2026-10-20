@@ -25,13 +25,15 @@ Short-form demo structure that works:
 6. **Follow line,** if they said one ("follow me for more..."). Default: keep it.
 
 Cut:
-- **Retakes:** keep the best one, usually the last.
+- **Retakes:** keep the one with the most conviction, not just the last. Run `stackcut lines face.mov --energy`: louder, more pitch movement, a steady pace and no long pause win. Then check the face at those moments (`stackcut frames face.mov`): eyes on the lens, awake. Drop yawns, slow blinks, sighs and flat takes.
 - **Stumbles:** "I I am not using" becomes a line that starts at the clean "I am", so set `from` there.
 - **Warm-up lines:** "have a look", "but I want to share this with you".
 - **Repeats of a point already made.**
 - **Anything the human can't back up.** If a claim (a price, "free", a number) isn't something they clearly stand behind, leave it out and tell them.
 
 Target 35-50 s. If the draft runs long, drop the weakest feature line first.
+
+For a tired or slow take: `style: {tightness: tight, speed: 1.07, punch: true, face_grade: {brightness: 0.05, warmth: 0.03, eyes: 0.08}}`, and `beat: 0.3` on the hook line. Keep `voice: light` with a good mic (DJI, lavalier): its own sound beats any clean-up.
 
 ## 3. Pick what the screen shows
 For every line, set `zoom`:

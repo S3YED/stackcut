@@ -4,7 +4,10 @@ from __future__ import annotations
 import json
 import os
 import urllib.request
+import wave
 from pathlib import Path
+
+import numpy as np
 
 from . import media
 
@@ -47,31 +50,85 @@ def isolate(src: Path, out: Path) -> Path | None:
         return None
 
 
-VOICE_CHAIN = ("highpass=f=80,afftdn=nf=-25,equalizer=f=250:t=q:w=1.2:g=-2.5,equalizer=f=3500:t=q:w=1.0:g=2,"
-               "equalizer=f=9000:t=h:w=1:g=1.5,deesser=i=0.3,acompressor=threshold=-20dB:ratio=3:attack=8:release=120:"
-               "makeup=3")
+VOICE_CHAINS = {
+    # the microphone's own sound: rumble cut, a little presence, gentle compression (a DJI or lavalier mic)
+    "light": "highpass=f=70,equalizer=f=4500:t=q:w=1.2:g=1.5,acompressor=threshold=-18dB:ratio=2:attack=10:"
+             "release=150:makeup=2",
+    # a phone or laptop mic in a noisy room: denoise, less mud, de-ess, firmer compression
+    "clean": "highpass=f=80,afftdn=nf=-25,equalizer=f=250:t=q:w=1.2:g=-2.5,equalizer=f=3500:t=q:w=1.0:g=2,"
+             "equalizer=f=9000:t=h:w=1:g=1.5,deesser=i=0.3,acompressor=threshold=-20dB:ratio=3:attack=8:release=120:"
+             "makeup=3",
+}
+TARGET_LUFS, CEILING = -14.0, 10 ** (-1.5 / 20)   # Reels/TikTok loudness, true-peak ceiling -1.5 dB
+
+
+def sfx_track(dur: float, out: Path, sr: int = 48000) -> Path:
+    """Two small sound cues, synthesised (no sample libraries, nothing to license): a soft low impact
+    under the first frame, a light pop as the hook sticker lands, and a pop on the last frame."""
+    n = int(dur * sr)
+    track = np.zeros(n, np.float32)
+    rng = np.random.default_rng(3)
+
+    def impact() -> np.ndarray:
+        t = np.arange(int(0.5 * sr)) / sr
+        body = np.sin(2 * np.pi * (58 - 18 * t) * t) * np.exp(-t / 0.09)
+        burst = np.convolve(rng.normal(0, 1, len(t)), np.ones(24) / 24, "same") * np.exp(-t / 0.012)
+        x = body + 0.6 * burst
+        return (x / np.abs(x).max() * 10 ** (-9 / 20)).astype(np.float32)
+
+    def pop(db: float) -> np.ndarray:
+        t = np.arange(int(0.08 * sr)) / sr
+        x = np.sin(2 * np.pi * (1300 - 5000 * t) * t) * np.exp(-t / 0.018)
+        return (x / np.abs(x).max() * 10 ** (db / 20)).astype(np.float32)
+
+    for at, cue in ((0.0, impact()), (0.02, pop(-16)), (max(0.0, dur - 0.12), pop(-14))):
+        i = int(at * sr)
+        j = min(n, i + len(cue))
+        track[i:j] += cue[: j - i]
+    pcm = (np.clip(np.repeat(track[:, None], 2, 1), -1, 1) * 32767).astype(np.int16)
+    with wave.open(str(out), "wb") as w:
+        w.setnchannels(2)
+        w.setsampwidth(2)
+        w.setframerate(sr)
+        w.writeframes(pcm.tobytes())
+    return out
 
 
 def master(voice: Path, out: Path, music: Path | None = None, music_lufs: float = -26.0,
-           isolated: Path | None = None) -> Path:
-    """Voice chain, optional music bed (looped, faded, side-chain ducked), final loudness -14 LUFS."""
+           isolated: Path | None = None, sfx: Path | None = None, chain: str = "light", speed: float = 1.0) -> Path:
+    """The voice through its chain and set to -14 LUFS; under it the music bed at `music_lufs` (looped,
+    faded, side-chain ducked) and the sound cues; then one fixed gain and a peak limiter for the whole
+    mix (no level pumping). speed: the finished mix a touch faster, pitch kept."""
     dur = media.duration(voice)
-    v_in = isolated or voice
-    args = [media.ffmpeg(), "-v", "error", "-y", "-i", str(v_in)]
+    v_proc = out.with_suffix(".voice.wav")
+    media.run([media.ffmpeg(), "-v", "error", "-y", "-i", str(isolated or voice), "-af",
+               f"{VOICE_CHAINS[chain]},aresample=48000", "-ac", "2", "-c:a", "pcm_s24le", str(v_proc)])
+    args = [media.ffmpeg(), "-v", "error", "-y", "-i", str(v_proc)]
+    mixes, filt = ["[v]"], f"[0:a]volume={TARGET_LUFS - loudness(v_proc):.2f}dB"
     if music:
         args += ["-stream_loop", "-1", "-i", str(music)]
-        # music level relative to the voice: -14 LUFS voice vs music_lufs
-        gain = music_lufs + 14
-        filt = (f"[0:a]{VOICE_CHAIN},aresample=48000,asplit=2[v][sc];"
-                f"[1:a]aresample=48000,atrim=0:{dur:.3f},volume={gain}dB,"
-                f"afade=t=in:d=0.4,afade=t=out:st={max(0.0, dur - 1.2):.3f}:d=1.2[m];"
-                "[m][sc]sidechaincompress=threshold=0.05:ratio=6:attack=20:release=300[md];"
-                "[v][md]amix=inputs=2:normalize=0,alimiter=limit=0.89,loudnorm=I=-14:TP=-1.5:LRA=11[out]")
+        filt += (",asplit=2[v][sc];"
+                 f"[1:a]aresample=48000,atrim=0:{dur:.3f},volume={music_lufs - loudness(music):.2f}dB,"
+                 f"afade=t=in:d=0.4,afade=t=out:st={max(0.0, dur - 1.2):.3f}:d=1.2[m];"
+                 "[m][sc]sidechaincompress=threshold=0.05:ratio=6:attack=20:release=300[md]")
+        mixes.append("[md]")
     else:
-        filt = f"[0:a]{VOICE_CHAIN},aresample=48000,alimiter=limit=0.89,loudnorm=I=-14:TP=-1.5:LRA=11[out]"
-    args += ["-filter_complex", filt, "-map", "[out]", "-t", f"{dur:.3f}", "-ar", "48000", "-ac", "2",
-             "-c:a", "pcm_s16le", str(out)]
-    media.run(args)
+        filt += "[v]"
+    if sfx:
+        args += ["-i", str(sfx)]
+        filt += f";[{len(mixes)}:a]aresample=48000[fx]"
+        mixes.append("[fx]")
+    tempo = f",atempo={speed}" if abs(speed - 1.0) > 1e-3 else ""
+    filt += (f";{''.join(mixes)}amix=inputs={len(mixes)}:normalize=0{tempo}[out]" if len(mixes) > 1
+             else f";[v]anull{tempo}[out]")
+    raw = out.with_suffix(".raw.wav")
+    media.run(args + ["-filter_complex", filt, "-map", "[out]", "-t", f"{dur / speed:.3f}", "-ar", "48000",
+                      "-ac", "2", "-c:a", "pcm_s24le", str(raw)])
+    media.run([media.ffmpeg(), "-v", "error", "-y", "-i", str(raw), "-af",
+               f"volume={TARGET_LUFS - loudness(raw):.2f}dB,alimiter=limit={CEILING:.4f}:attack=5:release=60:"
+               "level=disabled", "-ar", "48000", "-c:a", "pcm_s24le", str(out)])
+    raw.unlink()
+    v_proc.unlink()
     return out
 
 

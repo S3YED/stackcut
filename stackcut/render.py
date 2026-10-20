@@ -70,9 +70,12 @@ def render(edit_path: Path, out: Path, model: str = "large-v3-turbo", preview: b
     # 1. pieces: every line, with its pauses cut out
     pieces: list[Piece] = []
     for i, ln in enumerate(e.lines):
-        runs = (speech.tighten(fwav, words_all, ln.start, ln.end,
-                               ln.pad_in if ln.pad_in is not None else speech.PAD_IN)
+        runs = (speech.tighten(fwav, words_all, ln.start, ln.end, ln.pad_in, st.get("tightness", "normal"))
                 if ln.tight else [(ln.start, ln.end)])
+        if ln.beat and runs:   # a held pause after the line: the take's own silence, up to the next word
+            a, b = runs[-1]
+            nxt = min((w["s"] for w in words_all if w["s"] >= b), default=b + ln.beat)
+            runs[-1] = (a, max(b, min(b + ln.beat, nxt - 0.02)))
         used = 0.0
         for a, b in runs:
             s_in = (ln.screen_at + used) if ln.screen_at is not None else a - offset
@@ -126,8 +129,11 @@ def render(edit_path: Path, out: Path, model: str = "large-v3-turbo", preview: b
     # 4. sound
     print("· sound")
     voice = audio.cut_voice(e.face, [(p.a, p.a + (p.t1 - p.t0)) for p in pieces], work / "voice.wav")
-    iso = audio.isolate(voice, work / "voice_isolated.mp3")
-    mix = audio.master(voice, work / "mix.wav", e.music, float(st["music_lufs"]), iso)
+    iso = audio.isolate(voice, work / "voice_isolated.mp3") if st["voice"] == "isolate" else None
+    fx = audio.sfx_track(media.duration(voice), work / "sfx.wav") if st.get("sfx", True) else None
+    speed = float(st.get("speed", 1.0))
+    mix = audio.master(voice, work / "mix.wav", e.music, float(st["music_lufs"]), iso, fx,
+                       chain="clean" if st["voice"] == "clean" else "light", speed=speed)
 
     # 5. picture
     print("· picture")
@@ -141,7 +147,20 @@ def render(edit_path: Path, out: Path, model: str = "large-v3-turbo", preview: b
     win_y = WIN_BAND[0] + (WIN_BAND[1] - WIN_BAND[0] - win_h) // 2
     win = screen.Window(W, H, (W - win_w) // 2, win_y, win_w, win_h, 28, st["background"], st["base"])
     cam_track = face.Smooth(face.track(fproxy, work / "face_track.json"))
-    lut = face.white_balance(fproxy, cam_track, float(st["white_balance"]))
+    fg = st["face_grade"]
+    lut = face.grade_lut(face.white_balance(fproxy, cam_track, float(st["white_balance"])),
+                         float(fg["brightness"]), float(fg["warmth"]))
+    eyes = face.eye_light(W, H - FACE_TOP, float(fg["eyes"]), fill=float(st["face_fill"]))
+    # punch-ins: the face steps in a little on key words, at most every 2.2 s, so a jump cut reads as a beat
+    punches, last = [], -1e9
+    if st.get("punch"):
+        for pg in pages:
+            if pg.start - last >= 2.2:
+                punches.append(pg.start)
+                last = pg.start
+    def punch_at(t: float) -> float:
+        n = sum(1 for x in punches if x <= t)
+        return 1.10 if n % 2 else 1.0
     accent = tuple(int(st["accent"].lstrip("#")[i:i + 2], 16) for i in (0, 2, 4))
     accent_bgr = accent[::-1]
     hook = captions.sticker(e.hook) if e.hook else None
@@ -149,10 +168,12 @@ def render(edit_path: Path, out: Path, model: str = "large-v3-turbo", preview: b
     blurs = [(r["rect"], float(r.get("from", 0)), float(r.get("to", 1e9))) for r in e.privacy]
 
     venc = media.video_encoder("preview" if preview else "final")
+    # speed: the frames go in a touch faster and come out at 30 fps, matching the sped-up mix (one encode)
     enc = subprocess.Popen([media.ffmpeg(), "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "bgr24",
-                            "-s", f"{W}x{H}", "-r", str(FPS), "-i", "-", "-i", str(mix), "-map", "0:v", "-map", "1:a",
-                            *venc, "-pix_fmt", "yuv420p", *media.BT709, "-af", "apad", "-c:a", "aac", "-b:a", "256k",
-                            "-t", f"{total:.3f}", "-movflags", "+faststart", str(out)], stdin=subprocess.PIPE)
+                            "-s", f"{W}x{H}", "-r", f"{FPS * speed:.4f}", "-i", "-", "-i", str(mix),
+                            "-map", "0:v", "-map", "1:a", "-vf", f"fps={FPS}",
+                            *venc, "-pix_fmt", "yuv420p", *media.BT709, "-af", "apad", "-c:a", "aac", "-b:a", "320k",
+                            "-t", f"{total / speed:.3f}", "-movflags", "+faststart", str(out)], stdin=subprocess.PIPE)
     cam, line_start_cam, cur_line, frame_i = None, None, -1, 0
     try:
         for p in pieces:
@@ -179,7 +200,9 @@ def render(edit_path: Path, out: Path, model: str = "large-v3-turbo", preview: b
                     win.draw(canvas, screen.view(sf, *cam, win.w, win.h, top_crop))
                 if ff is not None:
                     fpanel = face.panel(face.apply_lut(ff, lut), cam_track.at(p.a + k / FPS), W, H - FACE_TOP,
-                                        float(st["face_fill"])).astype(np.float32)
+                                        float(st["face_fill"]) * punch_at(tt)).astype(np.float32)
+                    if eyes is not None:
+                        fpanel = np.clip(fpanel * eyes, 0, 255)
                     fpanel[:90] *= 1 - fade
                     canvas[FACE_TOP:] = fpanel.astype(np.uint8)
                 captions.progress(canvas, (frame_i + 1) / (total * FPS), accent_bgr)
@@ -193,6 +216,7 @@ def render(edit_path: Path, out: Path, model: str = "large-v3-turbo", preview: b
     finally:
         enc.stdin.close()
         enc.wait()
+    total /= speed
     sheet(out, out.with_suffix(".sheet.jpg"))
     print(f"✓ {out}  ({total:.1f} s, {len(words)} words, {audio.loudness(out):.1f} LUFS)")
     print(f"  review: {out.with_suffix('.sheet.jpg')} and {work / 'words.json'}")

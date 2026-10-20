@@ -21,7 +21,7 @@ stackcut does all of that from two files. You record your screen and, at the sam
 - **Every pause gone.** Voice-activity detection turns breaths and "uhm"s into jump cuts.
 - **Captions that pop.** Word by word, a few words at a time, the keyword highlighted.
 - **A hook on top.** One line, in the text-sticker style viewers already know.
-- **Sound that's ready.** Cleaned voice, optional ducked music bed, mastered to -14 LUFS (the Reels/TikTok target).
+- **Sound that's ready.** Your mic's own voice (or a clean-up for a poor mic), optional ducked music bed, mastered to -14 LUFS (the Reels/TikTok target).
 - **Privacy built in.** Blur boxes on the screen recording with time windows, for client names and messages.
 
 ![Before and after](docs/img/before-after.jpg)
@@ -94,8 +94,20 @@ lines:                            # face-take seconds, in the order they play
 | `tight: false` | Keep the pauses inside this line. |
 | `pad_in` | Extra lead-in for a soft first word ("I", "If") that the cut would clip. |
 | `cut: true` | Jump to this line's zoom instead of easing. |
+| `beat` | Hold this many seconds of the take's own pause after the line, e.g. `beat: 0.3` after the hook. |
 
-Full examples: [`examples/homepage.yaml`](examples/homepage.yaml) (English) and [`examples/whatsapp-nl.yaml`](examples/whatsapp-nl.yaml) (Dutch, with a blurred client screen).
+| Style option | What it does |
+|---|---|
+| `top_crop` | Hide this fraction of the screen's top (a browser's tabs and address bar). |
+| `tightness` | `normal`, or `tight`: about 0.08 s between words at every cut. |
+| `speed` | 1.05-1.1 lifts a slow delivery. The pitch stays the same. |
+| `punch` | The face steps in a little on key words, at most every 2.2 s, so jump cuts read as beats. |
+| `face_grade` | `{brightness, warmth, eyes}`, each about 0.03-0.08: a brighter, warmer face and a little light on the eyes. |
+| `voice` | `light` (default): your mic's own sound, gently compressed. `clean`: denoise a phone or laptop mic. `isolate`: ElevenLabs Voice Isolator (needs `ELEVENLABS_API_KEY`). |
+| `music_lufs` | Loudness of the music bed under a -14 LUFS voice (about -28 is a soft bed). |
+| `sfx` | A soft impact on the first frame and small pops on the hook and the end (synthesised, nothing to license). |
+
+Full examples: [`examples/homepage.yaml`](examples/homepage.yaml) (English), [`examples/whatsapp-nl.yaml`](examples/whatsapp-nl.yaml) (Dutch, with a blurred client screen), and the launch videos [`examples/stackcut-launch.yaml`](examples/stackcut-launch.yaml) and [`examples/stackcut-launch-nl.yaml`](examples/stackcut-launch-nl.yaml) (a tired take made tight: best takes, speed, punch-ins, face grade).
 
 ## How it works
 
@@ -109,12 +121,12 @@ face.mov ───┘                      └─ transcript (Whisper) ─ silen
 ```
 
 1. **Sync.** Both microphones heard the same words. Cross-correlating their loudness finds the offset to 10 ms.
-2. **Transcribe.** faster-whisper gives word timestamps. If a take comes back without punctuation, it runs once more with a punctuated prompt in the same language.
+2. **Transcribe.** faster-whisper gives word timestamps. If a take comes back without punctuation, it runs once more with a punctuated prompt in the same language. Whisper tends to skip a retake (it hears a repeat and drops it), so every stretch of speech without words is heard once more on its own: every take is there to pick from. `stackcut lines face.mov --energy` adds loudness, pitch movement and pace per sentence, to pick the take with the most conviction.
 3. **Cut.** Silero VAD finds the voiced parts of each line and every pause becomes a jump cut. A cut never clips a word.
 4. **Frame the screen.** The screen recording goes in a rounded window with a soft shadow on a blurred gradient. For each line the camera eases (0.6 s, cubic) to that line's target, which you choose or `auto` measures from frame differences.
 5. **Frame the face.** YuNet finds the face 10 times a second. The centre is smoothed over about 1.3 s and the size over about 3 s, so it never jitters. The face fills about a third of the panel. The white shirt under it sets the white balance.
 6. **Captions.** Words land on the output timeline, a few per page; spoken words light up and the keyword gets the accent pill.
-7. **Sound.** The kept audio is cut with 12 ms fades, cleaned (ElevenLabs Voice Isolator when `ELEVENLABS_API_KEY` is set, an FFmpeg chain otherwise), laid over an optional ducked music bed, and mastered to -14 LUFS.
+7. **Sound.** The kept audio is cut with 12 ms fades and keeps your mic's own sound (a gentle compressor; `voice: clean` or `isolate` for a poor mic). The voice is set to -14 LUFS, the music bed goes under it at `music_lufs`, ducked while you talk, and the mix gets one fixed gain and a peak limiter: no level pumping. Speed changes happen on the finished mix, so the sound is encoded once (AAC 320 kb/s).
 8. **Encode.** H.264 1080x1920, 30 fps (hardware VideoToolbox on a Mac, x264 elsewhere), plus a contact sheet to review.
 
 ## Recording tips

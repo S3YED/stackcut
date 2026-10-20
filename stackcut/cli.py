@@ -3,7 +3,7 @@
   stackcut doctor                         check ffmpeg, encoders and Python packages
   stackcut draft SCREEN FACE [-o edit.yaml]   transcribe, sync and write an automatic first edit
   stackcut render edit.yaml [-o out.mp4]  render the edit (add --preview for a small fast file)
-  stackcut lines FACE                     the transcript as numbered sentences with times
+  stackcut lines FACE [--energy]          the transcript as numbered sentences with times (and take energy)
   stackcut frames SCREEN [--every 2]      a contact sheet of the screen recording (to pick zooms and blur)
 """
 from __future__ import annotations
@@ -49,7 +49,12 @@ def cmd_lines(a: argparse.Namespace) -> None:
     wav = media.extract_wav(face, work / "face16k.wav")
     tr = speech.transcribe(wav, work / "transcript.json", a.model)
     for s in speech.sentences(tr["words"]):
-        print(f"{s['i']:3d}  {s['start']:7.2f}-{s['end']:7.2f}  {s['text']}")
+        extra = ""
+        if a.energy:   # to pick the take said with the most conviction
+            m = speech.energy(wav, tr["words"], s["start"], s["end"])
+            extra = (f"  [{m['loud_db']:5.1f} dB, pitch {m['pitch_range']:4.1f} st, "
+                     f"{m['words_per_s']:.1f} w/s, pause {m['longest_pause']:.2f}]")
+        print(f"{s['i']:3d}  {s['start']:7.2f}-{s['end']:7.2f}{extra}  {s['text']}")
 
 
 def cmd_draft(a: argparse.Namespace) -> None:
@@ -89,7 +94,9 @@ def main() -> None:
     ap.add_argument("--model", default="large-v3-turbo", help="whisper model (small is faster, large-v3-turbo better)")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("doctor").set_defaults(fn=cmd_doctor)
-    s = sub.add_parser("lines"); s.add_argument("face"); s.set_defaults(fn=cmd_lines)
+    s = sub.add_parser("lines"); s.add_argument("face")
+    s.add_argument("--energy", action="store_true", help="add loudness, pitch movement, pace and pauses per sentence")
+    s.set_defaults(fn=cmd_lines)
     s = sub.add_parser("draft"); s.add_argument("screen"); s.add_argument("face")
     s.add_argument("-o", "--out", default="edit.yaml"); s.set_defaults(fn=cmd_draft)
     s = sub.add_parser("render"); s.add_argument("edit"); s.add_argument("-o", "--out")
