@@ -3,18 +3,21 @@
   stackcut doctor                         check ffmpeg, encoders and Python packages
   stackcut draft SCREEN FACE [-o edit.yaml]   transcribe, sync and write an automatic first edit
   stackcut render edit.yaml [-o out.mp4]  render the edit (add --preview for a small fast file)
-  stackcut lines FACE                     the transcript as numbered sentences with times
+  stackcut lines FACE [--energy]          the transcript as numbered sentences with times (and take energy)
   stackcut frames SCREEN [--every 2]      a contact sheet of the screen recording (to pick zooms and blur)
+  stackcut sync FACE [--from S --to S]    how late the face take's sound is against the lips (av_offset)
 """
 from __future__ import annotations
 
 import argparse
 import importlib
 import os
+import platform
+import shutil
 import sys
 from pathlib import Path
 
-from . import __version__, edit, media, render, speech
+from . import __version__, audio, edit, lipsync, media, render, speech
 
 
 def cmd_doctor(_: argparse.Namespace) -> None:
@@ -37,8 +40,10 @@ def cmd_doctor(_: argparse.Namespace) -> None:
     import cv2
     if not hasattr(cv2, "FaceDetectorYN"):
         print("  ! OpenCV is too old for the YuNet face detector (need 4.8+)"); ok = False
-    print("  voice isolation:", "ElevenLabs (ELEVENLABS_API_KEY set)" if __import__("os").environ.get(
-        "ELEVENLABS_API_KEY") else "ffmpeg clean-up (set ELEVENLABS_API_KEY for AI isolation)")
+    df = shutil.which("deep-filter") or audio.DEEPFILTER_BUILDS.get((platform.system(), platform.machine()))
+    print("  noise removal (voice: denoise):", "DeepFilterNet" + ("" if shutil.which("deep-filter") else
+          " (downloads on first use)") if df else "not available here: put `deep-filter` on PATH, or use voice: light")
+    print("  voice: isolate:", "ElevenLabs key set" if os.environ.get("ELEVENLABS_API_KEY") else "needs ELEVENLABS_API_KEY")
     sys.exit(0 if ok else 1)
 
 
@@ -49,7 +54,24 @@ def cmd_lines(a: argparse.Namespace) -> None:
     wav = media.extract_wav(face, work / "face16k.wav")
     tr = speech.transcribe(wav, work / "transcript.json", a.model)
     for s in speech.sentences(tr["words"]):
-        print(f"{s['i']:3d}  {s['start']:7.2f}-{s['end']:7.2f}  {s['text']}")
+        extra = ""
+        if a.energy:   # to pick the take said with the most conviction
+            m = speech.energy(wav, tr["words"], s["start"], s["end"])
+            extra = (f"  [{m['loud_db']:5.1f} dB, pitch {m['pitch_range']:4.1f} st, "
+                     f"{m['words_per_s']:.1f} w/s, pause {m['longest_pause']:.2f}]")
+        print(f"{s['i']:3d}  {s['start']:7.2f}-{s['end']:7.2f}{extra}  {s['text']}")
+
+
+def cmd_sync(a: argparse.Namespace) -> None:
+    face = Path(a.face)
+    t1 = a.to if a.to is not None else min(media.duration(face), a.start + 150)
+    m = lipsync.measure(face, a.start, t1, ffmpeg=media.ffmpeg())
+    print(f"{face.name} {a.start:.0f}-{t1:.0f} s: the sound is {m['lag'] * 1000:+.0f} ms against the lips "
+          f"(r {m['r']:.2f}, 80% range {m['lo'] * 1000:+.0f} to {m['hi'] * 1000:+.0f} ms, face found {m['faces']:.0%})")
+    if m["r"] < lipsync.MIN_R:
+        print("  unclear: too little talking to the camera in this stretch; try another --from/--to")
+    else:
+        print(f"  edit.yaml: av_offset: {m['lag']:.3f}")
 
 
 def cmd_draft(a: argparse.Namespace) -> None:
@@ -89,7 +111,12 @@ def main() -> None:
     ap.add_argument("--model", default="large-v3-turbo", help="whisper model (small is faster, large-v3-turbo better)")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("doctor").set_defaults(fn=cmd_doctor)
-    s = sub.add_parser("lines"); s.add_argument("face"); s.set_defaults(fn=cmd_lines)
+    s = sub.add_parser("lines"); s.add_argument("face")
+    s.add_argument("--energy", action="store_true", help="add loudness, pitch movement, pace and pauses per sentence")
+    s.set_defaults(fn=cmd_lines)
+    s = sub.add_parser("sync"); s.add_argument("face")
+    s.add_argument("--from", dest="start", type=float, default=0.0); s.add_argument("--to", type=float)
+    s.set_defaults(fn=cmd_sync)
     s = sub.add_parser("draft"); s.add_argument("screen"); s.add_argument("face")
     s.add_argument("-o", "--out", default="edit.yaml"); s.set_defaults(fn=cmd_draft)
     s = sub.add_parser("render"); s.add_argument("edit"); s.add_argument("-o", "--out")
