@@ -1,7 +1,8 @@
 """Render an edit file into a 1080x1920 short.
 
 layout: split   the screen on top in a rounded window, the face below, captions on the seam
-layout: talk    the face fills the frame, animated graphics per line (talk.py, graphics.py)"""
+layout: talk    the face fills the frame, animated graphics per line (talk.py, graphics.py)
+layout: multicam  several cameras synced to the face take's mic, a view per line (multicam.py)"""
 from __future__ import annotations
 
 import json
@@ -12,7 +13,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import audio, captions, edit as editmod, face, graphics, lipsync, media, screen, speech, talk
+from . import audio, captions, edit as editmod, face, graphics, lipsync, media, multicam, screen, speech, talk
 
 W, H, FPS = 1080, 1920, media.FPS
 FACE_TOP = 1092              # split: face panel from here to the bottom
@@ -27,6 +28,9 @@ class Piece:
     a: float          # face-take seconds (audio)
     b: float
     screen_in: float  # screen seconds at the piece's first frame (split)
+    soft_end: bool = False   # the cut falls inside joined speech: a longer fade hides it
+    wa: float = -1.0         # the words the line chose: the run before its edges were settled
+    wb: float = -1.0         # (a settled tail never adds a word whisper placed early to the captions)
     t0: float = 0.0   # output seconds
     t1: float = 0.0
 
@@ -37,26 +41,32 @@ def workdir(edit_path: Path) -> Path:
     return d
 
 
-def prepare(face_path: Path, work: Path, model: str = "large-v3-turbo"):
+def prepare(face_path: Path, work: Path, model: str = "large-v3-turbo", language: str | None = None):
     """The face take's proxy, audio and transcript, cached in the work folder."""
     print("· preparing sources")
     fproxy = media.make_proxy(face_path, work / "face.mp4")
     fwav = media.extract_wav(face_path, work / "face16k.wav")
-    transcript = speech.transcribe(fwav, work / "transcript.json", model)
+    transcript = speech.transcribe(fwav, work / "transcript.json", model, language)
     return fproxy, fwav, transcript
 
 
-def resolve_offset(e: editmod.Edit, face_wav: Path, work: Path) -> float:
+def resolve_offset(e: editmod.Edit, face_wav: Path, work: Path) -> speech.Offsets:
+    """The screen recording's offset to the face take, per stretch of the take (a recorder can drop
+    half a second partway). A jump is reported, and each piece uses the offset where it sits."""
     if e.offset != "auto":
-        return float(e.offset)
+        return speech.Offsets([(0.0, float(e.offset))])
     if not any(s["codec_type"] == "audio" for s in media.probe(str(e.screen))["streams"]):
         raise SystemExit("the screen recording has no audio, so sync can't be measured: set 'offset:' by hand")
     swav = media.extract_wav(e.screen, work / "screen16k.wav")
-    off, conf = speech.sync_offset(face_wav, swav)
-    print(f"· sync: face = screen + {off:.2f} s (confidence {conf:.2f})")
+    offs, conf = speech.sync_map(face_wav, swav)
+    print(f"· sync: face = screen + {offs.at(0):.2f} s (confidence {conf:.2f})")
+    if offs.spread > 1 / FPS:
+        steps = [f"{o:.2f} s from {t:.0f} s" for (t, o), prev in zip(offs.points, [None] + offs.points[:-1])
+                 if prev is None or abs(o - prev[1]) > 0.05]
+        print(f"  the screen recording jumps along the take: {', '.join(steps)}; each piece uses its own")
     if conf < 0.3:
         print("  warning: weak sync. Were both recorded at the same time? Set 'offset:' by hand if not.")
-    return off
+    return offs
 
 
 def resolve_av_offset(e: editmod.Edit, pieces: list, work: Path) -> float:
@@ -96,22 +106,74 @@ def resolve_av_offset(e: editmod.Edit, pieces: list, work: Path) -> float:
     return float(e.av_offset)
 
 
-def cut(e: editmod.Edit, fwav: Path, words_all: list[dict], offset: float, sdur: float) -> list[Piece]:
-    """Every line, with its pauses cut out, laid on the output timeline."""
+SEAM = 0.15   # a line that starts this close to where the one before it ended continues the same sentence
+
+
+def source_of(e: editmod.Edit, ln: editmod.Line) -> str | None:
+    """What plays in the line's picture besides the face: "screen", a clip angle's name, or None
+    (the face alone, or a camera angle that follows the face take's own time)."""
+    if e.layout != "multicam" or ln.view == "split":
+        return "screen" if e.screen else None
+    name = ln.view.split(":", 1)[-1]
+    return name if e.angles.get(name, {}).get("clip") else None
+
+
+def cut(e: editmod.Edit, fwav: Path, words_all: list[dict], offset: speech.Offsets,
+        durations: dict[str, float]) -> list[Piece]:
+    """Every line, with its pauses cut out, laid on the output timeline.
+
+    Each cut is moved onto the real edges of its words (whisper's word times end early), and two
+    lines that follow each other in the take join without a cut: no overlap, no fade."""
     st = e.style
-    pieces: list[Piece] = []
-    for i, ln in enumerate(e.lines):
-        runs = (speech.tighten(fwav, words_all, ln.start, ln.end, ln.pad_in, st.get("tightness", "normal"))
-                if ln.tight else [(ln.start, ln.end)])
-        if ln.beat and runs:   # a held pause after the line: the take's own silence, up to the next word
-            a, b = runs[-1]
+    runs_by_line = []
+    for ln in e.lines:
+        runs_by_line.append(speech.tighten(fwav, words_all, ln.start, ln.end, ln.pad_in, st.get("tightness", "normal"))
+                            if ln.tight else [(ln.start, ln.end)])
+    seam = [i + 1 < len(runs_by_line) and abs(runs_by_line[i + 1][0][0] - runs_by_line[i][-1][1]) < SEAM
+            for i in range(len(runs_by_line))]
+    moved = []
+    for i, runs in enumerate(runs_by_line):
+        out = []
+        for k, (a0, b0) in enumerate(runs):
+            a, b, note, soft = speech.settle_edges(fwav, words_all, a0, b0, keep_a=k == 0 and i > 0 and seam[i - 1],
+                                                   keep_b=k == len(runs) - 1 and seam[i])
+            if note:
+                moved.append(f"line {i + 1}: {note}")
+            if out and a <= out[-1][1] + 0.02:        # settled into the next run: one piece
+                out[-1] = (out[-1][0], max(out[-1][1], b), soft, out[-1][3], b0)
+            else:
+                out.append((a, b, soft, a0, b0))
+        ln = e.lines[i]
+        if ln.beat and out and not seam[i] and not out[-1][2]:   # a held pause after the line: the take's own silence
+            a, b, soft, a0, b0 = out[-1]
             nxt = min((w["s"] for w in words_all if w["s"] >= b), default=b + ln.beat)
-            runs[-1] = (a, max(b, min(b + ln.beat, nxt - 0.02)))
+            out[-1] = (a, max(b, min(b + ln.beat, nxt - 0.02)), soft, a0, b0)
+        runs_by_line[i] = out
+    if moved:
+        print(f"  word edges: {len(moved)} cuts moved onto the words' real edges")
+        for m in moved:
+            print(f"    {m}")
+    pieces: list[Piece] = []
+    last_at: dict[str, float] = {}
+    for i, (ln, runs) in enumerate(zip(e.lines, runs_by_line)):
+        src = source_of(e, ln)
+        base = ln.screen_at
+        if base == "continue":
+            base = last_at.get(src or "", 0.0)
+        elif base is None and src not in (None, "screen"):
+            base = 0.0                                # a clip plays from its start unless told otherwise
         used = 0.0
-        for a, b in runs:
-            s_in = (ln.screen_at + used) if ln.screen_at is not None else a - offset
-            pieces.append(Piece(i, a, b, min(max(0.0, s_in), max(0.0, sdur - 0.1))))
-            used += b - a
+        for k, (a, b, soft, a0, b0) in enumerate(runs):
+            if k == 0 and i > 0 and seam[i - 1] and pieces:
+                a = pieces[-1].b                      # continue the sound exactly where the last line stopped
+            n = max(1, int(round((b - a) * FPS)))
+            b = a + n / FPS                           # whole frames: the sound and the picture cut together
+            dur = durations.get(src or "", 0.0)
+            s_in = (base + used) if base is not None else a - offset.at(a)
+            pieces.append(Piece(i, a, b, min(max(0.0, s_in), max(0.0, dur - 0.1)), soft, a0, b0))
+            used += n / FPS
+        if src and base is not None:
+            last_at[src] = base + used
     t = 0.0
     for p in pieces:
         n = int(round((p.b - p.a) * FPS))
@@ -124,7 +186,7 @@ def caption_words(e: editmod.Edit, pieces: list[Piece], words_all: list[dict]) -
     """The spoken words on the output timeline (with the edit's fixes), and the line each belongs to."""
     words, lines, seen = [], [], set()
     for k, p in enumerate(pieces):
-        for w in speech.words_in(words_all, p.a, p.b):
+        for w in speech.words_in(words_all, p.wa if p.wa >= 0 else p.a, p.wb if p.wb >= 0 else p.b):
             if (w["s"], w["w"]) in seen:
                 continue
             seen.add((w["s"], w["w"]))
@@ -132,6 +194,8 @@ def caption_words(e: editmod.Edit, pieces: list[Piece], words_all: list[dict]) -
             b = p.t0 + min(p.b, w["e"]) - p.a
             text = w["w"]
             core = re.sub(r"[^\w'-]", "", text).lower()
+            if core in e.fix and not e.fix[core]:   # fixed to nothing: a split word ("Next" ".js") shows once
+                continue
             if core in e.fix:   # caption correction from the edit file, punctuation kept
                 text = re.sub(re.escape(re.sub(r"[^\w'-]", "", text)), e.fix[core], text, count=1)
             if not words or re.search(r"[.?!]$", words[-1].text):   # a sentence starts: capital letter
@@ -184,6 +248,9 @@ class Split:
         self.fade = np.linspace(0.55, 0, 90, dtype=np.float32)[:, None, None]
         self.targets = []
         for i, ln in enumerate(e.lines):   # the zoom target per line
+            if ln.view not in ("", "split"):   # multicam: this line doesn't show the screen
+                self.targets.append([0.5, 0.5, 1.0])
+                continue
             if ln.zoom == "full":
                 z = [0.5, 1.0, 1 / (1 - self.top_crop)] if self.top_crop else [0.5, 0.5, 1.0]
             elif ln.zoom == "auto":
@@ -239,13 +306,14 @@ def render(edit_path: Path, out: Path, model: str = "large-v3-turbo", preview: b
     e = editmod.load(edit_path)
     st = e.style
     work = workdir(edit_path)
-    fproxy, fwav, tr = prepare(e.face, work, model)
+    fproxy, fwav, tr = prepare(e.face, work, model, e.language)
     words_all = tr["words"]
-    sproxy = media.make_proxy(e.screen, work / "screen.mp4") if e.layout == "split" else None
-    offset = resolve_offset(e, fwav, work) if sproxy else 0.0
-    sdur = media.duration(sproxy) if sproxy else 0.0
+    sproxy = media.make_proxy(e.screen, work / "screen.mp4") if e.screen else None
+    offset = resolve_offset(e, fwav, work) if sproxy else speech.Offsets([(0.0, 0.0)])
+    durations = {"screen": media.duration(sproxy) if sproxy else 0.0}
+    durations.update({name: media.duration(a["file"]) for name, a in e.angles.items() if a.get("clip")})
 
-    pieces = cut(e, fwav, words_all, offset, sdur)
+    pieces = cut(e, fwav, words_all, offset, durations)
     total = pieces[-1].t1
     print(f"· {e.layout} layout: {len(e.lines)} lines -> {len(pieces)} pieces, {total:.1f} s")
     words, word_lines = caption_words(e, pieces, words_all)
@@ -270,13 +338,26 @@ def render(edit_path: Path, out: Path, model: str = "large-v3-turbo", preview: b
             [{"line": g.line + 1, "kind": g.kind, "at": g.at, "t0": round(g.t0, 2), "t1": round(g.t1, 2),
               "beats": [round(b, 2) for b in g.beats]} for g in gs]))
         print(f"  {len(gs)} graphics")
+    elif e.layout == "multicam":
+        angles = {name: multicam.Angle(name, spec, work, fwav) for name, spec in e.angles.items()}
+        gs, starts = plan_graphics(e, pieces, words, word_lines)
+        tk = talk.Talk(gs, starts, [ln.cut for ln in e.lines], st, look, accent, tr.get("language") or "en")
+        cues = [c for g in gs for c in graphics.cues(g)] + [(t, "whoosh") for t in tk.moves()]
+        sp = Split(e, sproxy, pieces, look) if sproxy else None
+        win = sp.win if sp else screen.Window(W, H, (W - WIN_W) // 2, WIN_BAND[0], WIN_W, round(WIN_W * 9 / 16), 28,
+                                              st["background"], st["base"])
+        frame_layout = multicam.Multi(e, sp, tk.draw, angles, look, win)
+        views = {}
+        for ln in e.lines:
+            views[ln.view] = views.get(ln.view, 0) + 1
+        print("  views: " + ", ".join(f"{v} x{n}" for v, n in views.items()) + (f", {len(gs)} graphics" if gs else ""))
     else:
         frame_layout = Split(e, sproxy, pieces, look)
         (work / "zoom.json").write_text(json.dumps(frame_layout.targets))
 
     # sound
     print("· sound")
-    voice = audio.cut_voice(e.face, [(p.a, p.a + (p.t1 - p.t0)) for p in pieces], work / "voice.wav")
+    voice = audio.cut_voice(e.face, [(p.a, p.a + (p.t1 - p.t0), p.soft_end) for p in pieces], work / "voice.wav")
     cleaned = (audio.isolate(voice, work / "voice_isolated.mp3") if st["voice"] == "isolate" else
                audio.denoise(voice, work / "voice_denoised.wav", float(st["denoise_db"])) if st["voice"] == "denoise"
                else None)

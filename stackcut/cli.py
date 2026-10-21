@@ -53,7 +53,7 @@ def cmd_lines(a: argparse.Namespace) -> None:
     work = face.resolve().parent / f".{face.stem}.stackcut"
     work.mkdir(exist_ok=True)
     wav = media.extract_wav(face, work / "face16k.wav")
-    tr = speech.transcribe(wav, work / "transcript.json", a.model)
+    tr = speech.transcribe(wav, work / "transcript.json", a.model, a.language)
     for s in speech.sentences(tr["words"]):
         extra = ""
         if a.energy:   # to pick the take said with the most conviction
@@ -120,6 +120,7 @@ def main() -> None:
     sub.add_parser("doctor").set_defaults(fn=cmd_doctor)
     s = sub.add_parser("lines"); s.add_argument("face")
     s.add_argument("--energy", action="store_true", help="add loudness, pitch movement, pace and pauses per sentence")
+    s.add_argument("--language", help="the take's language (nl, en, ...): set it when a take opens in another language")
     s.set_defaults(fn=cmd_lines)
     s = sub.add_parser("sync"); s.add_argument("face")
     s.add_argument("--from", dest="start", type=float, default=0.0); s.add_argument("--to", type=float)
