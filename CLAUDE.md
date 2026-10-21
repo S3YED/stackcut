@@ -1,15 +1,19 @@
 # CLAUDE.md: how to edit a video with stackcut
 
-You are the editor. The human recorded their screen and, at the same time, their face on a phone. Your job is a 35-50 second vertical short that a stranger watches to the end. stackcut does the rendering. You make the edit decisions in `edit.yaml`.
+You are the editor. The human recorded their face on a phone or camera, and maybe their screen at the same time. Your job is a 35-50 second vertical short that a stranger watches to the end. stackcut does the rendering. You make the edit decisions in `edit.yaml`.
+
+Two layouts:
+- **`split`** (a screen recording and a face take): the screen on top, the face below. Sections 1-6.
+- **`talk`** (a face take only): the face fills the frame and animated graphics carry the story. Sections 1, 2, then "Talking head" instead of 3 and 4, then 5 and 6. The format: [docs/talking-head.md](docs/talking-head.md).
 
 ## 0. Check the inputs
-- Two files: a screen recording and a face take. Ask if it's unclear which is which.
+- One file (a face take: `layout: talk`) or two (a screen recording and a face take: `layout: split`). Ask if it's unclear which is which.
 - Run `stackcut doctor` once.
 - Both recordings need audio for automatic sync. If the screen recording is silent, ask roughly when the two started and set `offset:` by hand (face time = screen time + offset).
 
 ## 1. First draft
 ```bash
-stackcut draft screen.mp4 face.mov -o edit.yaml
+stackcut draft screen.mp4 face.mov -o edit.yaml   # split; for a talking head: stackcut draft face.mov
 stackcut lines face.mov             # numbered sentences with face-take times
 stackcut frames screen.mp4 --every 2
 ```
@@ -42,6 +46,17 @@ For every line, set `zoom`:
 - **`auto`** when you can't tell: it frames whatever moved on screen during that line.
 - **`screen_at: <seconds>`** when the synced moment doesn't show what's being said (they talk about a feature before or after clicking to it). The screen then rolls on from there.
 - **Browser in the recording?** Set `style.top_crop` (about 0.1) so tabs and the address bar never show in full view, and keep `cy` low enough that zoomed views stay below them.
+
+## Talking head: pick the graphics (instead of 3 and 4)
+For `layout: talk`, give most lines a `graphic:`. Read [docs/talking-head.md](docs/talking-head.md) once: it has every kind, place and option.
+- **The story** is section 2's without the screen: a hook under 3 s, the turn ("until...", "so I..."), two to four points with a graphic each, the payoff, the follow line.
+- **What the line turns on.** The one word, number or thing the viewer should remember from that line. That becomes the graphic: a callout (`text`), an `icon`, a number (`count`), a `list` of what it does, a chart (`bars`), a picture or B-roll clip (`image`), or a conversation (`chat`).
+- **Land it on the word:** `word: <word>`. List items land on their own words without help.
+- **Place:** `right` or `left` (beside the head) for short things, `top` (the split look) for charts, chats, cards and big numbers. Alternate; no more than two `top` lines in a row.
+- **Leave lines bare:** the hook (at most a short callout), the follow line, and one or two lines in the middle. Give those a `face_zoom` (1.1-1.2) for a zoom cut instead.
+- **Every number as measured**, with its source in a comment. A number the human can't back up stays out.
+- **No client data:** chat cards are written fresh and generic, images show only the human's own screens or test data.
+- After rendering, check `.edit.stackcut/graphics.json` (when each graphic lands and leaves) next to `words.json`, and look at the sheet: every graphic readable, nothing over the mouth, the captions clear of the cards.
 
 ## 4. Privacy (do not skip)
 Find every client name, phone number, email, message text, avatar and invoice on screen.
@@ -78,4 +93,4 @@ Then check:
 Show the human the preview and say what you cut and why. Never post or schedule anything without their explicit OK.
 
 ## A worked example
-`examples/homepage.yaml` and `examples/whatsapp-nl.yaml` are the real edits behind the first two videos. [docs/how-it-was-made.md](docs/how-it-was-made.md) walks through every decision.
+`examples/homepage.yaml` and `examples/whatsapp-nl.yaml` are the real edits behind the first two videos. [docs/how-it-was-made.md](docs/how-it-was-made.md) walks through every decision. `examples/talking-head-demo.yaml` is a talking head with a graphic on most lines.

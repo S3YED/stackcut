@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "stackcut"
 version = "0.1.0"
-description = "Screen recording + talking head -> a polished vertical short (styled screen on top, tracked face below, word-by-word captions). Built to be edited by an AI agent."
+description = "Screen recording + talking head -> a polished vertical short (styled screen on top, tracked face below, word-by-word captions), or a talking head with animated graphics. Built to be edited by an AI agent."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }

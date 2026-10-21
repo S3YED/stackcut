@@ -121,9 +121,10 @@ DENOISED_AIR = ",equalizer=f=7000:t=h:w=0.7:g=2"   # gives back the ~2 dB of 4-1
 TARGET_LUFS, CEILING = -14.0, 10 ** (-1.5 / 20)   # Reels/TikTok loudness, true-peak ceiling -1.5 dB
 
 
-def sfx_track(dur: float, out: Path, sr: int = 48000) -> Path:
-    """Two small sound cues, synthesised (no sample libraries, nothing to license): a soft low impact
-    under the first frame, a light pop as the hook sticker lands, and a pop on the last frame."""
+def sfx_track(dur: float, out: Path, cues: list[tuple[float, str]] = (), sr: int = 48000) -> Path:
+    """Small sound cues, synthesised (no sample libraries, nothing to license): a soft low impact
+    under the first frame, a light pop as the hook sticker lands and a pop on the last frame.
+    `cues` adds (seconds, "pop" | "whoosh"): a quieter pop as a graphic lands, a soft whoosh for a card."""
     n = int(dur * sr)
     track = np.zeros(n, np.float32)
     rng = np.random.default_rng(3)
@@ -140,7 +141,17 @@ def sfx_track(dur: float, out: Path, sr: int = 48000) -> Path:
         x = np.sin(2 * np.pi * (1300 - 5000 * t) * t) * np.exp(-t / 0.018)
         return (x / np.abs(x).max() * 10 ** (db / 20)).astype(np.float32)
 
-    for at, cue in ((0.0, impact()), (0.02, pop(-16)), (max(0.0, dur - 0.12), pop(-14))):
+    def whoosh(db: float) -> np.ndarray:   # band-limited air that swells and fades, about 0.35 s
+        m = int(0.36 * sr)
+        spec = np.fft.rfft(rng.normal(0, 1, m))
+        f = np.fft.rfftfreq(m, 1 / sr)
+        spec *= np.exp(-((np.log(np.maximum(f, 1)) - np.log(1800)) ** 2) / 0.9)
+        x = np.fft.irfft(spec, m) * np.sin(np.pi * np.linspace(0, 1, m) ** 0.7) ** 2
+        return (x / np.abs(x).max() * 10 ** (db / 20)).astype(np.float32)
+
+    made = {"pop": pop(-22), "whoosh": whoosh(-27)}
+    for at, cue in ((0.0, impact()), (0.02, pop(-16)), (max(0.0, dur - 0.12), pop(-14)),
+                    *((t, made[k]) for t, k in cues if 0.3 < t < dur - 0.3)):
         i = int(at * sr)
         j = min(n, i + len(cue))
         track[i:j] += cue[: j - i]
@@ -185,11 +196,12 @@ def duck_curve(voice: np.ndarray, depth_db: float, attack: float = 0.08, release
 
 def master(voice: Path, out: Path, music: Path | None = None, music_lufs: float = -32.0,
            cleaned: Path | None = None, sfx: bool = True, chain: str = "light", speed: float = 1.0,
-           music_start: float = 0.0, duck_db: float = 4.0, mid_cut_db: float = 4.0) -> dict:
+           music_start: float = 0.0, duck_db: float = 4.0, mid_cut_db: float = 4.0,
+           cues: list[tuple[float, str]] = ()) -> dict:
     """The voice (cleaned or the mic as is) through its chain, sped up if asked, set to -14 LUFS.
     Under it the music bed: its 1-4 kHz scooped out so it never sits on the voice, at `music_lufs`
-    in the pauses and `duck_db` lower while he talks. Then the sound cues, one fixed gain and a
-    peak limiter for the whole mix (no level pumping). Returns the loudness of the parts."""
+    in the pauses and `duck_db` lower while he talks. Then the sound cues (with the graphics' `cues`),
+    one fixed gain and a peak limiter for the whole mix (no level pumping). Returns the loudness of the parts."""
     work = out.parent
     tempo = f",atempo={speed}" if abs(speed - 1.0) > 1e-3 else ""
     air = DENOISED_AIR if cleaned is not None else ""
@@ -210,7 +222,7 @@ def master(voice: Path, out: Path, music: Path | None = None, music_lufs: float 
         mix[: len(bed)] += bed
         report["bed_lufs"] = loudness(_write(bed, work / "bed_mixed.wav"))
     if sfx:
-        fx = _read(sfx_track(dur, work / "sfx.wav"))[: len(v)]
+        fx = _read(sfx_track(dur, work / "sfx.wav", cues))[: len(v)]
         mix[: len(fx)] += fx
     raw = _write(mix, work / "mix_raw.wav")
     media.run([media.ffmpeg(), "-v", "error", "-y", "-i", str(raw), "-af",
