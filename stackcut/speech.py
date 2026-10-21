@@ -174,6 +174,59 @@ def sync_offset(face_wav: Path, screen_wav: Path) -> tuple[float, float]:
     return lag / 100.0, float(c.max() / min(len(a), len(b)))
 
 
+class Offsets:
+    """face time = other time + offset, where the offset may change along the take: a screen recorder
+    that drops half a second, a camera that drifts. Piecewise from 30 s windows."""
+
+    def __init__(self, points: list[tuple[float, float]]):
+        self.points = sorted(points)
+
+    def at(self, t: float) -> float:
+        return min(self.points, key=lambda p: abs(p[0] - t))[1]
+
+    @property
+    def spread(self) -> float:
+        offs = [o for _, o in self.points]
+        return max(offs) - min(offs)
+
+
+def sync_map(face_wav: Path, other_wav: Path, win: float = 30.0, step: float = 10.0,
+             min_conf: float = 0.4) -> tuple[Offsets, float]:
+    """The offset per stretch of the take: each 30 s window of the face take is cross-correlated
+    against the whole other track. Windows that match weakly are dropped; a lone window that
+    disagrees with both neighbours is treated as noise. Returns the map and the whole-take match."""
+    def env(p: Path) -> np.ndarray:
+        a = load_wav(p)
+        a = a[: len(a) // 160 * 160].reshape(-1, 160)
+        return np.log1p(np.sqrt((a ** 2).mean(1)) * 32768)
+    f, o = env(face_wav), env(other_wav)
+    whole, conf = sync_offset(face_wav, other_wav)
+    O = (o - o.mean()) / (o.std() + 1e-9)
+    pts = []
+    for t in np.arange(0, max(1.0, len(f) / 100 - win / 2), step):
+        seg = f[int(t * 100):int((t + win) * 100)]
+        if len(seg) < 500 or seg.std() < 1e-6:
+            continue
+        seg = (seg - seg.mean()) / seg.std()
+        n = 1 << int(np.ceil(np.log2(len(O) + len(seg))))
+        c = np.fft.irfft(np.fft.rfft(O, n) * np.conj(np.fft.rfft(seg, n)), n)[: len(O)]
+        k = int(np.argmax(c))
+        if c[k] / len(seg) >= min_conf:
+            pts.append((float(t + win / 2), round(float(t - k / 100.0), 3)))
+    def off(i: int, j: int) -> bool:
+        return abs(pts[i][1] - pts[j][1]) > 0.05
+
+    def lone(i: int) -> bool:   # disagrees with its neighbours: noise, or a window the other track hadn't started for
+        if 0 < i < len(pts) - 1:
+            return off(i, i - 1) and off(i, i + 1)
+        if len(pts) < 3:
+            return False
+        a, b = (1, 2) if i == 0 else (i - 1, i - 2)
+        return off(i, a) and not off(a, b)
+    clean = [p for i, p in enumerate(pts) if not lone(i)]
+    return Offsets(clean or [(0.0, whole)]), conf
+
+
 # ---------------------------------------------------------------- silence cuts
 
 PAD_IN, PAD_OUT, MERGE_GAP, MIN_RUN = 0.07, 0.05, 0.11, 0.14
@@ -286,6 +339,8 @@ def energy(wav: Path, words: list[dict], a: float, b: float) -> dict:
     audio = load_wav(wav)
     seg = audio[int(a * SR):int(b * SR)]
     frames = seg[: len(seg) // 640 * 640].reshape(-1, 640)
+    if not len(frames):        # shorter than one 40 ms frame: nothing to measure
+        return {"loud_db": -60.0, "pitch_range": 0.0, "words_per_s": 0.0, "longest_pause": 0.0}
     rms = np.sqrt((frames ** 2).mean(1))
     voiced = rms > max(0.01, np.percentile(rms, 30))
     loud = 20 * np.log10(rms[voiced].mean() + 1e-9) if voiced.any() else -60.0

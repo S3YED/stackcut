@@ -1,7 +1,8 @@
 """Render an edit file into a 1080x1920 short.
 
 layout: split   the screen on top in a rounded window, the face below, captions on the seam
-layout: talk    the face fills the frame, animated graphics per line (talk.py, graphics.py)"""
+layout: talk    the face fills the frame, animated graphics per line (talk.py, graphics.py)
+layout: multicam  several cameras synced to the face take's mic, a view per line (multicam.py)"""
 from __future__ import annotations
 
 import json
@@ -12,7 +13,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import audio, captions, edit as editmod, face, graphics, lipsync, media, screen, speech, talk
+from . import audio, captions, edit as editmod, face, graphics, lipsync, media, multicam, screen, speech, talk
 
 W, H, FPS = 1080, 1920, media.FPS
 FACE_TOP = 1092              # split: face panel from here to the bottom
@@ -37,26 +38,32 @@ def workdir(edit_path: Path) -> Path:
     return d
 
 
-def prepare(face_path: Path, work: Path, model: str = "large-v3-turbo"):
+def prepare(face_path: Path, work: Path, model: str = "large-v3-turbo", language: str | None = None):
     """The face take's proxy, audio and transcript, cached in the work folder."""
     print("· preparing sources")
     fproxy = media.make_proxy(face_path, work / "face.mp4")
     fwav = media.extract_wav(face_path, work / "face16k.wav")
-    transcript = speech.transcribe(fwav, work / "transcript.json", model)
+    transcript = speech.transcribe(fwav, work / "transcript.json", model, language)
     return fproxy, fwav, transcript
 
 
-def resolve_offset(e: editmod.Edit, face_wav: Path, work: Path) -> float:
+def resolve_offset(e: editmod.Edit, face_wav: Path, work: Path) -> speech.Offsets:
+    """The screen recording's offset to the face take, per stretch of the take (a recorder can drop
+    half a second partway). A jump is reported, and each piece uses the offset where it sits."""
     if e.offset != "auto":
-        return float(e.offset)
+        return speech.Offsets([(0.0, float(e.offset))])
     if not any(s["codec_type"] == "audio" for s in media.probe(str(e.screen))["streams"]):
         raise SystemExit("the screen recording has no audio, so sync can't be measured: set 'offset:' by hand")
     swav = media.extract_wav(e.screen, work / "screen16k.wav")
-    off, conf = speech.sync_offset(face_wav, swav)
-    print(f"· sync: face = screen + {off:.2f} s (confidence {conf:.2f})")
+    offs, conf = speech.sync_map(face_wav, swav)
+    print(f"· sync: face = screen + {offs.at(0):.2f} s (confidence {conf:.2f})")
+    if offs.spread > 1 / FPS:
+        steps = [f"{o:.2f} s from {t:.0f} s" for (t, o), prev in zip(offs.points, [None] + offs.points[:-1])
+                 if prev is None or abs(o - prev[1]) > 0.05]
+        print(f"  the screen recording jumps along the take: {', '.join(steps)}; each piece uses its own")
     if conf < 0.3:
         print("  warning: weak sync. Were both recorded at the same time? Set 'offset:' by hand if not.")
-    return off
+    return offs
 
 
 def resolve_av_offset(e: editmod.Edit, pieces: list, work: Path) -> float:
@@ -96,7 +103,7 @@ def resolve_av_offset(e: editmod.Edit, pieces: list, work: Path) -> float:
     return float(e.av_offset)
 
 
-def cut(e: editmod.Edit, fwav: Path, words_all: list[dict], offset: float, sdur: float) -> list[Piece]:
+def cut(e: editmod.Edit, fwav: Path, words_all: list[dict], offset: speech.Offsets, sdur: float) -> list[Piece]:
     """Every line, with its pauses cut out, laid on the output timeline."""
     st = e.style
     pieces: list[Piece] = []
@@ -109,7 +116,7 @@ def cut(e: editmod.Edit, fwav: Path, words_all: list[dict], offset: float, sdur:
             runs[-1] = (a, max(b, min(b + ln.beat, nxt - 0.02)))
         used = 0.0
         for a, b in runs:
-            s_in = (ln.screen_at + used) if ln.screen_at is not None else a - offset
+            s_in = (ln.screen_at + used) if ln.screen_at is not None else a - offset.at(a)
             pieces.append(Piece(i, a, b, min(max(0.0, s_in), max(0.0, sdur - 0.1))))
             used += b - a
     t = 0.0
@@ -132,6 +139,8 @@ def caption_words(e: editmod.Edit, pieces: list[Piece], words_all: list[dict]) -
             b = p.t0 + min(p.b, w["e"]) - p.a
             text = w["w"]
             core = re.sub(r"[^\w'-]", "", text).lower()
+            if core in e.fix and not e.fix[core]:   # fixed to nothing: a split word ("Next" ".js") shows once
+                continue
             if core in e.fix:   # caption correction from the edit file, punctuation kept
                 text = re.sub(re.escape(re.sub(r"[^\w'-]", "", text)), e.fix[core], text, count=1)
             if not words or re.search(r"[.?!]$", words[-1].text):   # a sentence starts: capital letter
@@ -184,6 +193,9 @@ class Split:
         self.fade = np.linspace(0.55, 0, 90, dtype=np.float32)[:, None, None]
         self.targets = []
         for i, ln in enumerate(e.lines):   # the zoom target per line
+            if ln.view not in ("", "split"):   # multicam: this line doesn't show the screen
+                self.targets.append([0.5, 0.5, 1.0])
+                continue
             if ln.zoom == "full":
                 z = [0.5, 1.0, 1 / (1 - self.top_crop)] if self.top_crop else [0.5, 0.5, 1.0]
             elif ln.zoom == "auto":
@@ -239,10 +251,10 @@ def render(edit_path: Path, out: Path, model: str = "large-v3-turbo", preview: b
     e = editmod.load(edit_path)
     st = e.style
     work = workdir(edit_path)
-    fproxy, fwav, tr = prepare(e.face, work, model)
+    fproxy, fwav, tr = prepare(e.face, work, model, e.language)
     words_all = tr["words"]
-    sproxy = media.make_proxy(e.screen, work / "screen.mp4") if e.layout == "split" else None
-    offset = resolve_offset(e, fwav, work) if sproxy else 0.0
+    sproxy = media.make_proxy(e.screen, work / "screen.mp4") if e.screen else None
+    offset = resolve_offset(e, fwav, work) if sproxy else speech.Offsets([(0.0, 0.0)])
     sdur = media.duration(sproxy) if sproxy else 0.0
 
     pieces = cut(e, fwav, words_all, offset, sdur)
@@ -270,6 +282,19 @@ def render(edit_path: Path, out: Path, model: str = "large-v3-turbo", preview: b
             [{"line": g.line + 1, "kind": g.kind, "at": g.at, "t0": round(g.t0, 2), "t1": round(g.t1, 2),
               "beats": [round(b, 2) for b in g.beats]} for g in gs]))
         print(f"  {len(gs)} graphics")
+    elif e.layout == "multicam":
+        angles = {name: multicam.Angle(name, spec, work, fwav) for name, spec in e.angles.items()}
+        gs, starts = plan_graphics(e, pieces, words, word_lines)
+        tk = talk.Talk(gs, starts, [ln.cut for ln in e.lines], st, look, accent, tr.get("language") or "en")
+        cues = [c for g in gs for c in graphics.cues(g)] + [(t, "whoosh") for t in tk.moves()]
+        sp = Split(e, sproxy, pieces, look) if sproxy else None
+        win = sp.win if sp else screen.Window(W, H, (W - WIN_W) // 2, WIN_BAND[0], WIN_W, round(WIN_W * 9 / 16), 28,
+                                              st["background"], st["base"])
+        frame_layout = multicam.Multi(e, sp, tk.draw, angles, look, win)
+        views = {}
+        for ln in e.lines:
+            views[ln.view] = views.get(ln.view, 0) + 1
+        print("  views: " + ", ".join(f"{v} x{n}" for v, n in views.items()) + (f", {len(gs)} graphics" if gs else ""))
     else:
         frame_layout = Split(e, sproxy, pieces, look)
         (work / "zoom.json").write_text(json.dumps(frame_layout.targets))
