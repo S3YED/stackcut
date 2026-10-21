@@ -2,6 +2,7 @@
 screen: src/screen-plus-edit.mp4      # de schermopname, daarna dit bestand in beeld (vanaf 150.3 s)
 face: src/face.mp4
 offset: 1.81                          # gezicht = scherm + 1.81 s, gemeten aan het geluid
+av_offset: 0.14                       # de DJI-mic loopt 140 ms achter op de lippen (gemeten)
 hook: "Deze video is door AI gemonteerd 🤖"
 music: src/ambient.flac              # Eleven Music (ElevenLabs), gemaakt op 20 okt 2026
 style:

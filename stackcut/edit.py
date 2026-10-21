@@ -56,6 +56,7 @@ class Edit:
     lines: list[Line]
     hook: str = ""
     offset: object = "auto"
+    av_offset: object = "auto"        # seconds the face take's sound lags its own picture (a wireless mic)
     music: Path | None = None
     privacy: list[dict] = field(default_factory=list)
     style: dict = field(default_factory=lambda: dict(DEFAULT_STYLE))
@@ -85,8 +86,11 @@ def load(path: Path) -> Edit:
     for key in ("screen", "face") + (("music",) if music else ()):
         if not (root / d[key]).exists():
             raise SystemExit(f"{path.name}: {key} file not found: {root / d[key]}")
+    av = d.get("av_offset", "auto")
+    if av != "auto" and not -1.0 <= float(av) <= 1.0:
+        raise SystemExit(f"{path.name}: av_offset {av} is outside -1..1 s")
     return Edit(root, (root / d["screen"]).resolve(), (root / d["face"]).resolve(), lines, d.get("hook") or "",
-                d.get("offset", "auto"), (root / music).resolve() if music else None, d.get("privacy") or [], style,
+                d.get("offset", "auto"), av, (root / music).resolve() if music else None, d.get("privacy") or [], style,
                 {str(k).lower(): str(v) for k, v in (d.get("fix") or {}).items()})
 
 
@@ -125,6 +129,7 @@ def draft(screen: str, face: str, sents: list[dict], offset: float, screen_dur: 
 screen: {screen}
 face: {face}
 offset: {offset:.2f}          # face time = screen time + offset (measured from the audio)
+av_offset: auto               # how late the face take's sound is against its lips (a wireless mic); measured
 hook: "{hook}"                # one line on top, about 28 characters. Empty = no sticker.
 music: null                   # optional: a music file for a quiet bed under the voice
 style:

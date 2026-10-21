@@ -2,6 +2,7 @@
 screen: src/screen-plus-edit.mp4      # the screen recording, then this file on screen (from 131.3 s)
 face: src/face.mp4
 offset: -4.29                         # face = screen - 4.29 s, measured from the audio
+av_offset: 0.13                       # the DJI mic runs 130 ms behind the lips (measured)
 hook: "My AI edited this whole video 🤖"
 music: src/ambient.flac              # Eleven Music (ElevenLabs), made on 20 Oct 2026
 style:

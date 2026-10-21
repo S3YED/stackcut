@@ -9,7 +9,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import audio, captions, edit as editmod, face, media, screen, speech
+from . import audio, captions, edit as editmod, face, lipsync, media, screen, speech
 
 W, H, FPS = 1080, 1920, media.FPS
 FACE_TOP = 1092              # face panel from here to the bottom
@@ -55,6 +55,43 @@ def resolve_offset(e: editmod.Edit, face_wav: Path, work: Path) -> float:
     if conf < 0.3:
         print("  warning: weak sync. Were both recorded at the same time? Set 'offset:' by hand if not.")
     return off
+
+
+def resolve_av_offset(e: editmod.Edit, pieces: list, work: Path) -> float:
+    """How late the face take's sound is against its lips, and the gate: with a measurement at hand,
+    a set av_offset more than one frame off the lips stops the render."""
+    a0 = min(p.a for p in pieces)
+    a1 = min(max(p.b for p in pieces), a0 + 150)
+    cache = work / "lipsync.json"
+    key = f"{e.face.name}:{a0:.2f}-{a1:.2f}"
+    seen = json.loads(cache.read_text()) if cache.exists() else {}
+    m = seen.get(key)
+    if m is None:
+        try:
+            print(f"· lip sync: measuring the face take ({a0:.0f}-{a1:.0f} s)")
+            m = lipsync.measure(e.face, a0, a1, ffmpeg=media.ffmpeg())
+        except lipsync.Unavailable as err:
+            if e.av_offset == "auto":
+                raise SystemExit(f"av_offset: auto needs a lip-sync measurement ({err}). Or set av_offset by hand: "
+                                 "0 for a phone recording")
+            print(f"  lip sync not checked ({err})")
+            return float(e.av_offset)
+        seen[key] = m
+        cache.write_text(json.dumps(seen))
+    print(f"  the take's sound is {m['lag'] * 1000:+.0f} ms against the lips (r {m['r']:.2f}, "
+          f"80% range {m['lo'] * 1000:+.0f} to {m['hi'] * 1000:+.0f} ms)")
+    if m["r"] < lipsync.MIN_R:
+        if e.av_offset == "auto":
+            raise SystemExit("lip sync: lips and sound don't line up clearly enough to measure; set av_offset by hand")
+        print("  too unclear to check; using av_offset as set")
+        return float(e.av_offset)
+    if e.av_offset == "auto":
+        return float(m["lag"])
+    off = float(m["lag"]) - float(e.av_offset)
+    if abs(off) > 1 / FPS:
+        raise SystemExit(f"lip sync gate: with av_offset {e.av_offset} the sound would be {off * 1000:+.0f} ms off the "
+                         f"lips, more than one frame. Set av_offset: {m['lag']:.3f}")
+    return float(e.av_offset)
 
 
 def render(edit_path: Path, out: Path, model: str = "large-v3-turbo", preview: bool = False) -> Path:
@@ -126,6 +163,8 @@ def render(edit_path: Path, out: Path, model: str = "large-v3-turbo", preview: b
     (work / "words.json").write_text(json.dumps([{"t": w.text, "s": round(w.start, 2), "e": round(w.end, 2)}
                                                   for w in words], ensure_ascii=False))
 
+    av = resolve_av_offset(e, pieces, work)   # the picture is taken that much earlier than the sound
+
     # 4. sound
     print("· sound")
     voice = audio.cut_voice(e.face, [(p.a, p.a + (p.t1 - p.t0)) for p in pieces], work / "voice.wav")
@@ -192,7 +231,7 @@ def render(edit_path: Path, out: Path, model: str = "large-v3-turbo", preview: b
                 line_t0 = p.t0
             target = tuple(targets[p.line])
             sf_iter = media.frames(sproxy, p.screen_in, n, sw, sh)
-            ff_iter = media.frames(fproxy, p.a, n, fw, fh)
+            ff_iter = media.frames(fproxy, p.a - av, n, fw, fh)
             for k in range(n):
                 tt = p.t0 + k / FPS
                 sf, ff = next(sf_iter), next(ff_iter)
@@ -206,7 +245,7 @@ def render(edit_path: Path, out: Path, model: str = "large-v3-turbo", preview: b
                         sf = screen.blur(sf, rects)
                     win.draw(canvas, screen.view(sf, *cam, win.w, win.h, top_crop))
                 if ff is not None:
-                    fpanel = face.panel(face.apply_lut(ff, lut), cam_track.at(p.a + k / FPS), W, H - FACE_TOP,
+                    fpanel = face.panel(face.apply_lut(ff, lut), cam_track.at(p.a - av + k / FPS), W, H - FACE_TOP,
                                         float(st["face_fill"]) * punch_at(tt)).astype(np.float32)
                     if eyes is not None:
                         fpanel = np.clip(fpanel * eyes, 0, 255)

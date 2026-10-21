@@ -69,6 +69,7 @@ Follow CLAUDE.md in the stackcut repo.
 screen: screen.mp4
 face: face.mov
 offset: auto                      # face = screen + offset, measured from the audio
+av_offset: auto                   # how late the face take's sound is against its lips (wireless mics)
 hook: "AI rebuilt my site overnight 😳"
 music: bed.mp3                    # optional
 style:
@@ -125,6 +126,7 @@ face.mov ───┘                      └─ transcript (Whisper) ─ silen
 ```
 
 1. **Sync.** Both microphones heard the same words. Cross-correlating their loudness finds the offset to 10 ms.
+   **Lip sync.** A camera with a wireless or Bluetooth mic records the sound late: a DJI pocket camera with its wireless mic measured 130-140 ms, four frames, enough to see. stackcut measures it from the take itself, the inner-lip opening ([MediaPipe](https://github.com/google-ai-edge/mediapipe) face landmarks) against the loudness of the speech (a phone recording reads 0 ms), and takes the picture that much earlier than the sound. `av_offset: auto` uses the measurement. A number you set is checked against it: more than one frame off and the render stops. `stackcut sync face.mov` prints the value. The render chain itself is checked with markers instead of lips ([`tools/sync_markers.py`](tools/sync_markers.py)): a flash and a beep on the same frame stay within one frame (+20 ms) through tight cuts, speed-up and frame-rate change. (Lips in a tightly cut video read about 75 ms early, because the cuts trim the lip movement that comes before each phrase, so the take is measured before cutting.) MediaPipe is optional and brings its own OpenCV, so it can live in its own Python: `STACKCUT_SYNC_PYTHON=/path/to/python`.
 2. **Transcribe.** faster-whisper gives word timestamps. If a take comes back without punctuation, it runs once more with a punctuated prompt in the same language. Whisper tends to skip a retake (it hears a repeat and drops it), so every stretch of speech without words is heard once more on its own: every take is there to pick from. `stackcut lines face.mov --energy` adds loudness, pitch movement and pace per sentence, to pick the take with the most conviction.
 3. **Cut.** Silero VAD finds the voiced parts of each line and every pause becomes a jump cut. A cut never clips a word.
 4. **Frame the screen.** The screen recording goes in a rounded window with a soft shadow on a blurred gradient. For each line the camera eases (0.6 s, cubic) to that line's target, which you choose or `auto` measures from frame differences.
@@ -138,6 +140,7 @@ face.mov ───┘                      └─ transcript (Whisper) ─ silen
 - Record the screen and your face **at the same time**. Your phone in front of you (landscape or portrait both work), any screen recorder on the computer. Both mics on.
 - Say each line once; when you mess up, just say it again. The last take wins.
 - iPhone HDR footage is fine. On a Mac it is tone-mapped in hardware.
+- A wireless mic on the camera (DJI and the like) records the sound a few frames late. stackcut corrects it (`av_offset`), but a clap at the start of the take makes it easy to check by eye.
 - Blur client data: `stackcut frames screen.mp4` makes a contact sheet so you (or your AI) can find what to cover.
 
 ## Credits
@@ -155,6 +158,7 @@ It stands on these open-source projects:
 | [YuNet](https://github.com/opencv/opencv_zoo/tree/main/models/face_detection_yunet) by Shiqi Yu (OpenCV Zoo) | face detection (downloaded on first run) | MIT |
 | [NumPy](https://numpy.org), [Pillow](https://python-pillow.org), [PyYAML](https://pyyaml.org) | arrays, text drawing, the edit file | BSD / MIT-CMU / MIT |
 | [Geist](https://github.com/vercel/geist-font) by Vercel | caption and sticker font (bundled) | SIL OFL 1.1 |
+| [MediaPipe](https://github.com/google-ai-edge/mediapipe) face landmarker by Google | lip-sync measurement (optional; model downloaded on first use, checksum pinned) | Apache 2.0 |
 | [DeepFilterNet](https://github.com/Rikorose/DeepFilterNet) by Hendrik Schröter | room noise removal (its command-line build, downloaded on first use, checksum pinned) | MIT / Apache 2.0 |
 
 The screen look is inspired by [OpenScreen](https://github.com/siddharthvaddem/openscreen) and Screen Studio. The example videos were recorded with [Cap](https://cap.so).

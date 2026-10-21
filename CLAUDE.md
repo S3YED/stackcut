@@ -70,6 +70,7 @@ Then check:
   - Are there doubled words?
   - Did whisper mishear anything? Fix it in `fix:` (for example `{stream: screen}`).
 - **Loudness:** the printed value should be about -14 LUFS.
+- **Lip sync:** the render prints how late the take's sound is against the lips and checks the output. A camera with a wireless mic (DJI) is typically 130-140 ms late: use `av_offset: auto`, or the value `stackcut sync face.mov` prints. Never ship a render whose lip-sync check failed or was unclear without looking at a few p/b/m words frame by frame.
 - **A clipped first word in the audio** (a soft "I" or "If"): give that line `pad_in: 0.2`.
 - **One sentence split over two lines:** give the second line `join: true`.
 

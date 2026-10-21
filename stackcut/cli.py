@@ -5,6 +5,7 @@
   stackcut render edit.yaml [-o out.mp4]  render the edit (add --preview for a small fast file)
   stackcut lines FACE [--energy]          the transcript as numbered sentences with times (and take energy)
   stackcut frames SCREEN [--every 2]      a contact sheet of the screen recording (to pick zooms and blur)
+  stackcut sync FACE [--from S --to S]    how late the face take's sound is against the lips (av_offset)
 """
 from __future__ import annotations
 
@@ -16,7 +17,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from . import __version__, audio, edit, media, render, speech
+from . import __version__, audio, edit, lipsync, media, render, speech
 
 
 def cmd_doctor(_: argparse.Namespace) -> None:
@@ -61,6 +62,18 @@ def cmd_lines(a: argparse.Namespace) -> None:
         print(f"{s['i']:3d}  {s['start']:7.2f}-{s['end']:7.2f}{extra}  {s['text']}")
 
 
+def cmd_sync(a: argparse.Namespace) -> None:
+    face = Path(a.face)
+    t1 = a.to if a.to is not None else min(media.duration(face), a.start + 150)
+    m = lipsync.measure(face, a.start, t1, ffmpeg=media.ffmpeg())
+    print(f"{face.name} {a.start:.0f}-{t1:.0f} s: the sound is {m['lag'] * 1000:+.0f} ms against the lips "
+          f"(r {m['r']:.2f}, 80% range {m['lo'] * 1000:+.0f} to {m['hi'] * 1000:+.0f} ms, face found {m['faces']:.0%})")
+    if m["r"] < lipsync.MIN_R:
+        print("  unclear: too little talking to the camera in this stretch; try another --from/--to")
+    else:
+        print(f"  edit.yaml: av_offset: {m['lag']:.3f}")
+
+
 def cmd_draft(a: argparse.Namespace) -> None:
     screen_p, face_p = Path(a.screen), Path(a.face)
     out = Path(a.out)
@@ -101,6 +114,9 @@ def main() -> None:
     s = sub.add_parser("lines"); s.add_argument("face")
     s.add_argument("--energy", action="store_true", help="add loudness, pitch movement, pace and pauses per sentence")
     s.set_defaults(fn=cmd_lines)
+    s = sub.add_parser("sync"); s.add_argument("face")
+    s.add_argument("--from", dest="start", type=float, default=0.0); s.add_argument("--to", type=float)
+    s.set_defaults(fn=cmd_sync)
     s = sub.add_parser("draft"); s.add_argument("screen"); s.add_argument("face")
     s.add_argument("-o", "--out", default="edit.yaml"); s.set_defaults(fn=cmd_draft)
     s = sub.add_parser("render"); s.add_argument("edit"); s.add_argument("-o", "--out")

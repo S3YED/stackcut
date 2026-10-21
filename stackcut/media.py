@@ -130,9 +130,10 @@ def extract_wav(src: Path, out: Path, rate: int = 16000, channels: int = 1) -> P
 
 
 def frames(src: Path, start: float, count: int, w: int, h: int):
-    """Yield `count` BGR frames from `start` (seconds), scaled to w x h.
-    Past the end of the file the last frame is held."""
-    p = subprocess.Popen([ffmpeg(), "-v", "error", "-ss", f"{max(0.0, start):.3f}", "-i", str(src), "-an",
+    """Yield `count` BGR frames from `start` (seconds), scaled to w x h: the first is the frame
+    nearest to `start` (a seek lands on the first frame at or after it, so it starts half a frame
+    early). Past the end of the file the last frame is held."""
+    p = subprocess.Popen([ffmpeg(), "-v", "error", "-ss", f"{max(0.0, start - 0.5 / FPS):.4f}", "-i", str(src), "-an",
                           "-vf", f"fps={FPS},scale={w}:{h}:flags=lanczos,format=bgr24",
                           "-frames:v", str(count), "-f", "rawvideo", "-"],
                          stdout=subprocess.PIPE, stdin=subprocess.DEVNULL)
