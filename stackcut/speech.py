@@ -223,8 +223,12 @@ def sync_map(face_wav: Path, other_wav: Path, win: float = 30.0, step: float = 1
             return False
         a, b = (1, 2) if i == 0 else (i - 1, i - 2)
         return off(i, a) and not off(a, b)
-    clean = [p for i, p in enumerate(pts) if not lone(i)]
-    return Offsets(clean or [(0.0, whole)]), conf
+    for _ in range(3):                  # two bad windows in a row at the start: drop them in turn
+        clean = [p for i, p in enumerate(pts) if not lone(i)]
+        if len(clean) == len(pts):
+            break
+        pts = clean
+    return Offsets(pts or [(0.0, whole)]), conf
 
 
 # ---------------------------------------------------------------- silence cuts
@@ -306,6 +310,79 @@ def tighten(wav: Path, words: list[dict], a: float, b: float, pad_in: float | No
             merged.append([s, e])
     return [(round(s, 3), round(e, 3)) for s, e in merged
             if any(s <= (ws_ + we) / 2 <= e for ws_, we in ws)] or [(a, b)]
+
+
+EDGE_HOP, EDGE_QUIET, EDGE_VOICE = 0.01, 8.0, 14.0   # 10 ms steps; dB over the room tone
+_edge_cache: dict[str, tuple[np.ndarray, float]] = {}
+
+
+def _edges_env(wav: Path) -> tuple[np.ndarray, float]:
+    key = str(wav)
+    if key not in _edge_cache:
+        x, n = load_wav(wav), int(EDGE_HOP * SR)
+        db = 20 * np.log10(np.sqrt((x[: len(x) // n * n].reshape(-1, n) ** 2).mean(1)) + 1e-9)
+        _edge_cache[key] = (db, float(np.percentile(db, 10)))
+    return _edge_cache[key]
+
+
+def settle_edges(wav: Path, words: list[dict], a: float, b: float, keep_a: bool = False,
+                 keep_b: bool = False) -> tuple[float, float, str, bool]:
+    """Move a piece's ends onto the real edges of its words, measured in the sound.
+
+    A line's times come from whisper, whose word edges are often 100 ms or more off: a cut there stops
+    the last word while it still sounds (the caption shows it, the ear hears half of it). The end moves
+    on until the voice has died away; when the next word follows without any pause, the cut goes in
+    the dip the next word rises out of. Whisper's times only bound the search (to about the middle of
+    the next word; a word it stretched over a pause, longer than 0.8 s, bounds nothing). The start does
+    the same backwards, but only into a voiced sound, never into a breath.
+    Returns (a, b, what moved, whether the end is a joined-speech cut that needs a softer fade)."""
+    db, floor = _edges_env(wav)
+
+    def lv(t: float) -> float:
+        return float(db[max(0, min(len(db) - 1, int(round(t / EDGE_HOP))))])
+
+    real = [w for w in words if w["e"] - w["s"] < 0.8]
+
+    def walk(t: float, step: float, limit: float, near: float | None) -> tuple[float | None, bool]:
+        """From t outwards up to limit: the first quiet 10 ms (the word has died away), or the bottom
+        of the dip where the next word rises out of it (joined speech; only near where whisper heard
+        that word, so a "t" inside "websites" is not taken for it). None when neither comes."""
+        start, m, mi, u = lv(t), lv(t), t, t
+        while (u < limit) if step > 0 else (u > limit):
+            v = lv(u if step > 0 else u - EDGE_HOP)
+            if v < floor + EDGE_QUIET:
+                return u, False
+            if v < m:
+                m, mi = v, u
+            elif v > m + 6 and m < start - 4 and near is not None and abs(u - near) < 0.15:
+                return mi, True
+            u += step
+        return None, True
+
+    note, joined = [], False
+    if not keep_b and lv(b - 0.015) >= floor + EDGE_QUIET:            # still sounding at the cut
+        nxt = next((w for w in real if (w["s"] + w["e"]) / 2 > b + 0.02), None)
+        limit = min(b + 0.40, max((nxt["s"] + nxt["e"]) / 2, nxt["s"] + 0.15)) if nxt else b + 0.40
+        u, joined = walk(b, EDGE_HOP, limit, nxt["s"] if nxt else None)
+        if u is not None:
+            nb = u + (0.02 if not joined else 0.0)
+        else:                                                         # no dip at all: a vowel runs into a vowel
+            nb = min(max(b, nxt["s"] + 0.01), limit) if nxt else limit
+        if abs(nb - b) >= 0.01:
+            note.append(f"end {'+' if nb > b else ''}{(nb - b) * 1000:.0f} ms" + (" (joined speech)" if joined else ""))
+        b = nb
+    if not keep_a and lv(a - 0.02) >= floor + EDGE_VOICE:             # cutting into a voiced sound
+        prv = next((w for w in reversed(real) if (w["s"] + w["e"]) / 2 < a - 0.02), None)
+        limit = max(a - 0.40, min((prv["s"] + prv["e"]) / 2, prv["e"] - 0.15)) if prv else a - 0.40
+        u, j = walk(a, -EDGE_HOP, limit, prv["e"] if prv else None)
+        if u is not None:
+            na = u - (0.02 if not j else 0.0)
+        else:
+            na = max(min(a, prv["e"] - 0.01), limit) if prv else limit
+        if abs(na - a) >= 0.01:
+            note.append(f"start {'+' if na > a else ''}{(na - a) * 1000:.0f} ms")
+        a = na
+    return round(a, 3), round(b, 3), ", ".join(note), joined
 
 
 def words_in(words: list[dict], a: float, b: float) -> list[dict]:

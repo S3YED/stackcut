@@ -28,6 +28,9 @@ class Piece:
     a: float          # face-take seconds (audio)
     b: float
     screen_in: float  # screen seconds at the piece's first frame (split)
+    soft_end: bool = False   # the cut falls inside joined speech: a longer fade hides it
+    wa: float = -1.0         # the words the line chose: the run before its edges were settled
+    wb: float = -1.0         # (a settled tail never adds a word whisper placed early to the captions)
     t0: float = 0.0   # output seconds
     t1: float = 0.0
 
@@ -103,22 +106,74 @@ def resolve_av_offset(e: editmod.Edit, pieces: list, work: Path) -> float:
     return float(e.av_offset)
 
 
-def cut(e: editmod.Edit, fwav: Path, words_all: list[dict], offset: speech.Offsets, sdur: float) -> list[Piece]:
-    """Every line, with its pauses cut out, laid on the output timeline."""
+SEAM = 0.15   # a line that starts this close to where the one before it ended continues the same sentence
+
+
+def source_of(e: editmod.Edit, ln: editmod.Line) -> str | None:
+    """What plays in the line's picture besides the face: "screen", a clip angle's name, or None
+    (the face alone, or a camera angle that follows the face take's own time)."""
+    if e.layout != "multicam" or ln.view == "split":
+        return "screen" if e.screen else None
+    name = ln.view.split(":", 1)[-1]
+    return name if e.angles.get(name, {}).get("clip") else None
+
+
+def cut(e: editmod.Edit, fwav: Path, words_all: list[dict], offset: speech.Offsets,
+        durations: dict[str, float]) -> list[Piece]:
+    """Every line, with its pauses cut out, laid on the output timeline.
+
+    Each cut is moved onto the real edges of its words (whisper's word times end early), and two
+    lines that follow each other in the take join without a cut: no overlap, no fade."""
     st = e.style
-    pieces: list[Piece] = []
-    for i, ln in enumerate(e.lines):
-        runs = (speech.tighten(fwav, words_all, ln.start, ln.end, ln.pad_in, st.get("tightness", "normal"))
-                if ln.tight else [(ln.start, ln.end)])
-        if ln.beat and runs:   # a held pause after the line: the take's own silence, up to the next word
-            a, b = runs[-1]
+    runs_by_line = []
+    for ln in e.lines:
+        runs_by_line.append(speech.tighten(fwav, words_all, ln.start, ln.end, ln.pad_in, st.get("tightness", "normal"))
+                            if ln.tight else [(ln.start, ln.end)])
+    seam = [i + 1 < len(runs_by_line) and abs(runs_by_line[i + 1][0][0] - runs_by_line[i][-1][1]) < SEAM
+            for i in range(len(runs_by_line))]
+    moved = []
+    for i, runs in enumerate(runs_by_line):
+        out = []
+        for k, (a0, b0) in enumerate(runs):
+            a, b, note, soft = speech.settle_edges(fwav, words_all, a0, b0, keep_a=k == 0 and i > 0 and seam[i - 1],
+                                                   keep_b=k == len(runs) - 1 and seam[i])
+            if note:
+                moved.append(f"line {i + 1}: {note}")
+            if out and a <= out[-1][1] + 0.02:        # settled into the next run: one piece
+                out[-1] = (out[-1][0], max(out[-1][1], b), soft, out[-1][3], b0)
+            else:
+                out.append((a, b, soft, a0, b0))
+        ln = e.lines[i]
+        if ln.beat and out and not seam[i] and not out[-1][2]:   # a held pause after the line: the take's own silence
+            a, b, soft, a0, b0 = out[-1]
             nxt = min((w["s"] for w in words_all if w["s"] >= b), default=b + ln.beat)
-            runs[-1] = (a, max(b, min(b + ln.beat, nxt - 0.02)))
+            out[-1] = (a, max(b, min(b + ln.beat, nxt - 0.02)), soft, a0, b0)
+        runs_by_line[i] = out
+    if moved:
+        print(f"  word edges: {len(moved)} cuts moved onto the words' real edges")
+        for m in moved:
+            print(f"    {m}")
+    pieces: list[Piece] = []
+    last_at: dict[str, float] = {}
+    for i, (ln, runs) in enumerate(zip(e.lines, runs_by_line)):
+        src = source_of(e, ln)
+        base = ln.screen_at
+        if base == "continue":
+            base = last_at.get(src or "", 0.0)
+        elif base is None and src not in (None, "screen"):
+            base = 0.0                                # a clip plays from its start unless told otherwise
         used = 0.0
-        for a, b in runs:
-            s_in = (ln.screen_at + used) if ln.screen_at is not None else a - offset.at(a)
-            pieces.append(Piece(i, a, b, min(max(0.0, s_in), max(0.0, sdur - 0.1))))
-            used += b - a
+        for k, (a, b, soft, a0, b0) in enumerate(runs):
+            if k == 0 and i > 0 and seam[i - 1] and pieces:
+                a = pieces[-1].b                      # continue the sound exactly where the last line stopped
+            n = max(1, int(round((b - a) * FPS)))
+            b = a + n / FPS                           # whole frames: the sound and the picture cut together
+            dur = durations.get(src or "", 0.0)
+            s_in = (base + used) if base is not None else a - offset.at(a)
+            pieces.append(Piece(i, a, b, min(max(0.0, s_in), max(0.0, dur - 0.1)), soft, a0, b0))
+            used += n / FPS
+        if src and base is not None:
+            last_at[src] = base + used
     t = 0.0
     for p in pieces:
         n = int(round((p.b - p.a) * FPS))
@@ -131,7 +186,7 @@ def caption_words(e: editmod.Edit, pieces: list[Piece], words_all: list[dict]) -
     """The spoken words on the output timeline (with the edit's fixes), and the line each belongs to."""
     words, lines, seen = [], [], set()
     for k, p in enumerate(pieces):
-        for w in speech.words_in(words_all, p.a, p.b):
+        for w in speech.words_in(words_all, p.wa if p.wa >= 0 else p.a, p.wb if p.wb >= 0 else p.b):
             if (w["s"], w["w"]) in seen:
                 continue
             seen.add((w["s"], w["w"]))
@@ -255,9 +310,10 @@ def render(edit_path: Path, out: Path, model: str = "large-v3-turbo", preview: b
     words_all = tr["words"]
     sproxy = media.make_proxy(e.screen, work / "screen.mp4") if e.screen else None
     offset = resolve_offset(e, fwav, work) if sproxy else speech.Offsets([(0.0, 0.0)])
-    sdur = media.duration(sproxy) if sproxy else 0.0
+    durations = {"screen": media.duration(sproxy) if sproxy else 0.0}
+    durations.update({name: media.duration(a["file"]) for name, a in e.angles.items() if a.get("clip")})
 
-    pieces = cut(e, fwav, words_all, offset, sdur)
+    pieces = cut(e, fwav, words_all, offset, durations)
     total = pieces[-1].t1
     print(f"· {e.layout} layout: {len(e.lines)} lines -> {len(pieces)} pieces, {total:.1f} s")
     words, word_lines = caption_words(e, pieces, words_all)
@@ -301,7 +357,7 @@ def render(edit_path: Path, out: Path, model: str = "large-v3-turbo", preview: b
 
     # sound
     print("· sound")
-    voice = audio.cut_voice(e.face, [(p.a, p.a + (p.t1 - p.t0)) for p in pieces], work / "voice.wav")
+    voice = audio.cut_voice(e.face, [(p.a, p.a + (p.t1 - p.t0), p.soft_end) for p in pieces], work / "voice.wav")
     cleaned = (audio.isolate(voice, work / "voice_isolated.mp3") if st["voice"] == "isolate" else
                audio.denoise(voice, work / "voice_denoised.wav", float(st["denoise_db"])) if st["voice"] == "denoise"
                else None)

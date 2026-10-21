@@ -8,6 +8,9 @@ one frame, or the render stops. Per line the edit picks the view:
   split         the screen recording on top in its window, the face below
   <angle>       that angle fills the frame (e.g. `back`: you at work, from behind)
   split:<angle> that angle in the top window instead of the screen, the face below
+
+An angle with `clip: true` is a recording of its own (a page capture, b-roll): it is not synced and
+plays from each line's `screen_at` (`continue` picks up where the last line on it stopped).
 """
 from __future__ import annotations
 
@@ -87,6 +90,10 @@ class Angle:
         self.w, self.h = media.size(self.proxy)
         self.mask = blur_mask(self.w, self.h, spec.get("blur") or [])
         self.keep_dark = bool(spec.get("blur_keep_dark"))
+        self.clip = bool(spec.get("clip"))
+        if self.clip:
+            print(f"· angle {name}: a clip of its own, plays from each line's screen_at")
+            return
         wav = media.extract_wav(spec["file"], work / f"angle-{name}16k.wav")
         if spec["offset"] == "auto":
             self.offsets, conf = speech.sync_map(face_wav, wav)
@@ -114,8 +121,11 @@ class Angle:
             msg += f"; it shifts by {self.offsets.spread * 1000:.0f} ms along the take, each piece uses its own"
         print(msg)
 
-    def frames(self, face_t: float, n: int):
-        for f in media.frames(self.proxy, face_t - self.offsets.at(face_t), n, self.w, self.h):
+    def frames(self, face_t: float, n: int, clip_t: float = 0.0):
+        """n frames for the piece starting at face_t: a camera follows the face take's time, a clip
+        plays from clip_t (the line's screen_at)."""
+        t = clip_t if self.clip else face_t - self.offsets.at(face_t)
+        for f in media.frames(self.proxy, t, n, self.w, self.h):
             yield f if f is None or self.mask is None else hide(f, self.mask, self.keep_dark)
 
 
@@ -147,7 +157,7 @@ class Multi:
         elif self.view != "face":
             name = self.view.split(":", 1)[-1]
             self.ang = self.angles[name]
-            self.af = self.ang.frames(p.a, n)
+            self.af = self.ang.frames(p.a, n, p.screen_in)
             z = self.e.lines[p.line].zoom
             self.zoom = [float(v) for v in z] if isinstance(z, (list, tuple)) else [0.5, 0.5, 1.0]
 

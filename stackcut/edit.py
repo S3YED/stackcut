@@ -46,7 +46,8 @@ class Line:
     start: float                      # face-take seconds
     end: float
     zoom: object = "auto"             # split: "full", "auto" or [cx, cy, z]
-    screen_at: float | None = None    # split: show this screen moment instead of the synced one
+    screen_at: float | str | None = None   # split / a clip angle: play from this moment ("continue": where
+                                           # the last line on the same source stopped) instead of the synced one
     join: bool = False                # the sentence continues from the line before
     tight: bool = True                # cut pauses and breaths inside the line
     pad_in: float | None = None       # extra lead-in for a soft first word ("I", "If")
@@ -90,7 +91,8 @@ def load(path: Path) -> Edit:
         a = {"file": a} if isinstance(a, str) else dict(a)
         if not a.get("file") or not (root / a["file"]).exists():
             raise SystemExit(f"{path.name}: angle {name} file not found: {root / str(a.get('file'))}")
-        off = a.get("offset", "auto")
+        clip = bool(a.get("clip"))           # a recording of its own (a page capture, b-roll): not synced
+        off = "auto" if clip else a.get("offset", "auto")
         if off != "auto":
             off = float(off)
         crop = [float(v) for v in a.get("crop", [0.5, 0.5])]
@@ -98,7 +100,7 @@ def load(path: Path) -> Edit:
         if any(len(r) != 4 or not all(0 <= v <= 1 for v in r) for r in blur):
             raise SystemExit(f"{path.name}: angle {name} blur: each area is [x, y, w, h] as fractions of the frame (0-1)")
         angles[str(name)] = {"file": (root / a["file"]).resolve(), "offset": off, "crop": crop, "blur": blur,
-                          "blur_keep_dark": bool(a.get("blur_keep_dark"))}
+                          "blur_keep_dark": bool(a.get("blur_keep_dark")), "clip": clip}
     views = _views(angles, bool(d.get("screen")))
     lines = []
     for i, l in enumerate(d.get("lines") or []):
@@ -113,12 +115,22 @@ def load(path: Path) -> Edit:
         if (layout == "talk" or (layout == "multicam" and view == "face")) and ("zoom" in l or "screen_at" in l):
             raise SystemExit(f"{where}: zoom and screen_at are for the screen (layout: split); "
                              "in layout: talk the face zooms with face_zoom")
+        sat = l.get("screen_at")
+        if sat is not None and sat != "continue":
+            try:
+                sat = float(sat)
+            except (TypeError, ValueError):
+                raise SystemExit(f"{where}: screen_at is a time in seconds or \"continue\"") from None
+        angle = view.split(":", 1)[-1] if view not in ("", "face", "split") else None
+        if sat is not None and angle and not angles[angle]["clip"]:
+            raise SystemExit(f"{where}: screen_at works on the screen and on clip angles; angle {angle} follows "
+                             "the face take's time (give it clip: true if it is a recording of its own)")
         if l.get("graphic") is not None and not (layout == "talk" or view == "face"):
             raise SystemExit(f"{where}: graphic works in layout: talk, or on a multicam line with view: face")
         fz = float(l.get("face_zoom", 1.0))
         if not 0.8 <= fz <= 1.6:
             raise SystemExit(f"{where}: face_zoom {fz} is outside 0.8-1.6")
-        lines.append(Line(float(l["from"]), float(l["to"]), l.get("zoom", "auto"), l.get("screen_at"),
+        lines.append(Line(float(l["from"]), float(l["to"]), l.get("zoom", "auto"), sat,
                           bool(l.get("join", False)), bool(l.get("tight", True)), l.get("pad_in"),
                           bool(l.get("cut", False)), float(l.get("beat", 0.0)),
                           graphics.parse(l["graphic"], root, where) if l.get("graphic") is not None else None, fz,
