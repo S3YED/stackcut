@@ -6,6 +6,7 @@
 
 Screen recording + talking head → a clean vertical short.<br>
 Styled screen on top, your face below, word-by-word captions in the middle.<br>
+Or just your face, with animated graphics next to you.<br>
 Built so your AI agent can do the editing.
 
 ![Three frames made with stackcut](docs/img/hero.jpg)
@@ -25,6 +26,42 @@ stackcut does all of that from two files. You record your screen and, at the sam
 - **Privacy built in.** Blur boxes on the screen recording with time windows, for client names and messages.
 
 ![Before and after](docs/img/before-after.jpg)
+
+## Talking head with graphics
+
+No screen recording? Give stackcut one face take and it makes the other popular format: your face fills the frame, and per line a graphic lands next to you as you say the word. A callout, an icon or logo, a number that counts up, a list, a small chart, a picture or B-roll card, a chat. When a graphic needs the room, your face slides aside or down into the split look, and back.
+
+![Talking head with graphics](docs/img/talk.jpg)
+
+```bash
+stackcut draft face.mov -o edit.yaml    # layout: talk
+stackcut render edit.yaml
+```
+
+```yaml
+layout: talk
+face: face.mov
+hook: "Claude edits my videos now 🤖"
+lines:
+  - {from: 1.20, to: 5.96, graphic: {text: "*Claude* took over", word: Claude}}
+  - {from: 10.98, to: 14.98, graphic: {icon: "🔓", label: code cracked, at: left, word: cracked}}
+  - {from: 30.00, to: 34.34, graphic: {list: [Animates, Captions, Edits]}}
+  - {from: 34.34, to: 37.52, face_zoom: 1.15}
+  - {from: 101.8, to: 106.0, graphic: {count: 2, label: videos in, word: two}}
+  - {from: 70.56, to: 75.00, graphic: {image: repo-card.png, caption: free and open source, at: top}}
+```
+
+| Graphic | Example | What it does |
+|---|---|---|
+| `text` | `{text: "Zero *apps*"}` | a callout; the words land one by one, `*starred*` ones in the accent colour |
+| `icon` | `{icon: "🤖", label: Claude}` | an emoji or a logo file on a white tile that pops in |
+| `count` | `{count: 22, label: businesses}` | a number that counts up |
+| `list` | `{list: [Plans, Books, Bills]}` | ticked chips, each landing on its own spoken word |
+| `bars` | `{bars: [10, 24, 66], labels: [Jun, Jul, Aug]}` | a bar chart that grows |
+| `image` | `{image: shot.png}` or `{image: broll.mp4}` | a rounded card that slides in; a clip plays |
+| `chat` | `{chat: [{in: "Can you call me?"}, {out: "Booked ✅"}]}` | message bubbles, one by one |
+
+Each takes `at: right | left | top` (beside your head, or on top in the split look), `word:` a word to land on, and `span:` to stay up over more lines. `face_zoom: 1.15` on a line is a zoom cut. Every graphic lands with a soft pop. The whole format, with rules for picking graphics and recording: [docs/talking-head.md](docs/talking-head.md).
 
 ## Why "edited by AI"?
 
@@ -96,6 +133,8 @@ lines:                            # face-take seconds, in the order they play
 | `pad_in` | Extra lead-in for a soft first word ("I", "If") that the cut would clip. |
 | `cut: true` | Jump to this line's zoom instead of easing. |
 | `beat` | Hold this many seconds of the take's own pause after the line, e.g. `beat: 0.3` after the hook. |
+| `graphic` | `layout: talk`: the line's graphic (see "Talking head with graphics"). |
+| `face_zoom` | The face this much closer for the line (1.1-1.2): a zoom cut. |
 
 | Style option | What it does |
 |---|---|
@@ -112,7 +151,7 @@ lines:                            # face-take seconds, in the order they play
 | `music_start` | Skip a track's quiet intro (seconds). |
 | `sfx` | A soft impact on the first frame and small pops on the hook and the end (synthesised, nothing to license). |
 
-Full examples: [`examples/homepage.yaml`](examples/homepage.yaml) (English), [`examples/whatsapp-nl.yaml`](examples/whatsapp-nl.yaml) (Dutch, with a blurred client screen), and the launch videos [`examples/stackcut-launch.yaml`](examples/stackcut-launch.yaml) and [`examples/stackcut-launch-nl.yaml`](examples/stackcut-launch-nl.yaml) (a tired take made tight: best takes, speed, punch-ins, face grade).
+Full examples: [`examples/talking-head-demo.yaml`](examples/talking-head-demo.yaml) (a talking head with graphics), [`examples/homepage.yaml`](examples/homepage.yaml) (English), [`examples/whatsapp-nl.yaml`](examples/whatsapp-nl.yaml) (Dutch, with a blurred client screen), and the launch videos [`examples/stackcut-launch.yaml`](examples/stackcut-launch.yaml) and [`examples/stackcut-launch-nl.yaml`](examples/stackcut-launch-nl.yaml) (a tired take made tight: best takes, speed, punch-ins, face grade).
 
 ## How it works
 

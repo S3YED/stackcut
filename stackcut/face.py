@@ -112,17 +112,20 @@ def apply_lut(frame: np.ndarray, lut: np.ndarray) -> np.ndarray:
     return cv2.merge([cv2.LUT(c, lut[:, j].copy()) for j, c in enumerate(cv2.split(frame))])
 
 
-def panel(frame: np.ndarray, cam: tuple[float, float, float], pw: int, ph: int,
-          fill: float = 0.36, eye_line: float = 0.44) -> np.ndarray:
-    """Frame the face: it fills `fill` of the panel height, centred, eyes at `eye_line`.
-    The crop never leaves the picture; a face near the edge sits off-centre instead."""
+def panel(frame: np.ndarray, cam: tuple[float, float, float], pw: int, ph: int, fill: float = 0.36,
+          eye_line: float = 0.44, x_at: float = 0.5) -> tuple[np.ndarray, tuple[float, float, float]]:
+    """Frame the face: it fills `fill` of the panel height, its centre at (x_at, eye_line) of the panel.
+    The crop never leaves the picture; a face near the edge sits off-centre instead.
+    Returns the panel and where the face landed in it: (x, y, face height) in panel pixels."""
     x, y, fh = cam
     sh, sw = frame.shape[:2]
     scale = max(fill * ph / max(fh, 1), pw / sw, ph / sh)
-    cx = min(max(x, pw / 2 / scale), sw - pw / 2 / scale)
+    cx = min(max(x, pw * x_at / scale), sw - pw * (1 - x_at) / scale)
     cy = min(max(y, ph * eye_line / scale), sh - ph * (1 - eye_line) / scale)
-    m = np.float32([[scale, 0, pw / 2 - cx * scale], [0, scale, ph * eye_line - cy * scale]])
-    return cv2.warpAffine(frame, m, (pw, ph), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+    tx, ty = pw * x_at - cx * scale, ph * eye_line - cy * scale
+    m = np.float32([[scale, 0, tx], [0, scale, ty]])
+    img = cv2.warpAffine(frame, m, (pw, ph), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+    return img, (x * scale + tx, y * scale + ty, fh * scale)
 
 
 def grade_lut(lut: np.ndarray, brightness: float = 0.0, warmth: float = 0.0) -> np.ndarray:
@@ -138,12 +141,30 @@ def grade_lut(lut: np.ndarray, brightness: float = 0.0, warmth: float = 0.0) -> 
     return np.stack(out, 1).astype(np.uint8)
 
 
-def eye_light(pw: int, ph: int, strength: float, eye_line: float = 0.44, fill: float = 0.36) -> np.ndarray | None:
-    """A soft spot of light over the eyes (multiplier map for the panel): lifts tired eyes a little."""
+def light_eyes(img: np.ndarray, at: tuple[float, float, float], strength: float) -> np.ndarray:
+    """A soft spot of light over the eyes, where panel() put the face: lifts tired eyes a little."""
     if not strength:
-        return None
-    yy, xx = np.mgrid[0:ph, 0:pw].astype(np.float32)
-    face_px = fill * ph
-    cy, sx, sy = ph * eye_line - 0.08 * face_px, 0.45 * face_px, 0.22 * face_px
-    g = np.exp(-(((xx - pw / 2) / sx) ** 2 + ((yy - cy) / sy) ** 2) / 2)
-    return (1 + strength * g)[..., None].astype(np.float32)
+        return img
+    px, py, f = at
+    cy, sx, sy = py - 0.08 * f, 0.45 * f, 0.22 * f
+    h, w = img.shape[:2]
+    x0, x1 = int(max(0, px - 3 * sx)), int(min(w, px + 3 * sx))
+    y0, y1 = int(max(0, cy - 3 * sy)), int(min(h, cy + 3 * sy))
+    if x1 <= x0 or y1 <= y0:
+        return img
+    yy, xx = np.mgrid[y0:y1, x0:x1].astype(np.float32)
+    g = 1 + strength * np.exp(-(((xx - px) / sx) ** 2 + ((yy - cy) / sy) ** 2) / 2)
+    img[y0:y1, x0:x1] = np.clip(img[y0:y1, x0:x1] * g[..., None], 0, 255).astype(np.uint8)
+    return img
+
+
+class Look:
+    """How the face is shown: white balance and grade in one LUT, the face framed, light on the eyes."""
+
+    def __init__(self, lut: np.ndarray, eyes: float):
+        self.lut, self.eyes = lut, eyes
+
+    def panel(self, frame: np.ndarray, cam: tuple[float, float, float], pw: int, ph: int, fill: float,
+              eye_line: float = 0.44, x_at: float = 0.5) -> np.ndarray:
+        img, at = panel(apply_lut(frame, self.lut), cam, pw, ph, fill, eye_line, x_at)
+        return light_eyes(img, at, self.eyes)
