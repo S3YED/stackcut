@@ -1,0 +1,50 @@
+# stackcut edit file, multicam, English PHP reel (22 Oct 2026). Written by Claude from the transcript.
+# The takes, the screen recording, the back shot and the music are not in the repo.
+# Times: the face take (DJI). Screen times (screen_at): the Cap recording (face = screen + 16.36 s).
+# Facts: a flaw in PHP, not "PHP got hacked": "because PHP got hacked" is cut and the graphic on line 2
+# says what it is. Cut as unverified: "authorities are telling people to take websites offline",
+# "none of this affected any of my clients", "the old web is being hacked". Kept: "we were not affected"
+# (no Weblyfe or Clark server or site runs PHP, checked 22 Oct) and "attacked by exploits" (attempts seen).
+layout: multicam
+language: en
+face: src/face.mp4
+screen: src/screen.mp4
+offset: auto
+av_offset: auto
+angles:
+  back:
+    file: src/back.mov            # iPhone behind me, 1080x1920: full screen on the strongest line
+    crop: [0.5, 0.5]
+    blur: [[0.16, 0.41, 0.84, 0.36], [0.40, 0.72, 0.18, 0.11]]   # the god's-eye TV and the laptop screen
+    blur_keep_dark: true          # my head in front of the TV stays sharp
+hook: "🚨 PHP got hacked?"
+music: src/pulse.mp3              # Eleven Music (Creator plan), 22 Oct 2026, not in any repo
+style:
+  top_crop: 0.107
+  tightness: tight
+  punch: true
+  face_grade: {brightness: 0.05, warmth: 0.03, eyes: 0.08}
+  speed: 1.07
+  voice: denoise
+  music_start: 5
+  music_lufs: -32
+  music_duck_db: 4
+  music_mid_cut_db: 6
+fix: {next: Next.js, js: "", webflow: Webflow, wordpress: WordPress, php: PHP, dm: DM, ai: AI}
+lines:
+  - {from: 28.00, to: 30.03, view: face, beat: 0.3}                                         # The world is panicking right now
+  - {from: 33.50, to: 36.86, view: face, graphic: {text: "A *flaw* in PHP", word: PHP}}     # PHP is a programming language ...
+  - {from: 38.38, to: 41.26, screen_at: 22, zoom: [0.33, 0.30, 1.8]}                        # Almost every WordPress site (BBC)
+  - {from: 107.55, to: 109.24, view: back}                                                  # We were not affected by this
+  - {from: 109.22, to: 114.18, screen_at: 92.5, zoom: [0.5, 0.55, 1.2]}                     # since 2017 ... Webflow ("We build.")
+  - {from: 114.16, to: 117.08, screen_at: 122.3, zoom: [0.5, 0.45, 1.2]}                    # since this year we built fully agentic (getclark.app)
+  - {from: 117.06, to: 120.64, screen_at: 176.5, zoom: [0.5, 0.45, 1.3]}                    # transfer your old website to a new one (weblyfe.nl)
+  - {from: 120.62, to: 125.02, view: face,                                                  # better, safer, faster, easier to find
+     graphic: {list: [Better, Safer, Faster, Easier to find]}}
+  - {from: 125.62, to: 128.04, view: face, face_zoom: 1.12, join: true}                     # but also not affected by this PHP exploit
+  - {from: 140.50, to: 145.36, screen_at: 124.6, zoom: [0.5, 0.45, 1.2]}                    # AI development ... websites and systems
+  - {from: 172.85, to: 177.70, screen_at: 40, zoom: [0.33, 0.30, 1.6]}                      # old infrastructure attacked by exploits (BBC)
+  - {from: 177.88, to: 181.54, view: "split:back", zoom: [0.5, 0.55, 1.6]}                  # ahead of the curve ... people like me
+  - {from: 181.50, to: 185.70, view: face, join: true,                                      # live and running in less than 24 hours
+     graphic: {count: 24, label: hours, word: "24"}}
+  - {from: 196.38, to: 200.40, view: face, face_zoom: 1.1}                                  # send me a DM and book a call

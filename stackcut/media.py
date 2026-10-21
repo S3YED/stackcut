@@ -96,7 +96,7 @@ def make_proxy(src: Path, out: Path) -> Path:
 
     iPhone HDR (HLG) is tone-mapped: in hardware on a Mac (VideoToolbox), with
     zscale elsewhere. Without either, the clip is used as is and looks flat."""
-    if out.exists() and out.stat().st_mtime > src.stat().st_mtime:
+    if out.exists() and out.stat().st_mtime > src.stat().st_mtime and not rotation(out):
         return out
     out.parent.mkdir(parents=True, exist_ok=True)
     rot = rotation(src)
@@ -104,6 +104,8 @@ def make_proxy(src: Path, out: Path) -> Path:
             180: "hflip,vflip", -180: "hflip,vflip"}.get(rot)
     if is_hdr(src) and has_filter("scale_vt"):
         dec = ["-hwaccel", "videotoolbox", "-hwaccel_output_format", "videotoolbox_vld", "-noautorotate"]
+        if turn:   # turned by hand below: drop the phone's rotation tag, or every reader turns it again
+            dec += ["-display_rotation:v:0", "0"]
         vf = ("scale_vt=color_matrix=bt709:color_primaries=bt709:color_transfer=bt709,hwdownload,"
               f"format={'p010le' if is_10bit(src) else 'nv12'},format=yuv420p")
         vf += f",{turn}" if turn else ""
