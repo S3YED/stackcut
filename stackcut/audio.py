@@ -18,16 +18,22 @@ import numpy as np
 from . import media
 
 
-def cut_voice(src: Path, pieces: list[tuple[float, float]], out: Path) -> Path:
-    """Concatenate the kept pieces of the face take's audio, with 12 ms fades at every cut (no clicks)."""
-    parts, fade = [], 0.012
-    filt = []
-    for i, (a, b) in enumerate(pieces):
-        d = b - a
+def cut_voice(src: Path, pieces: list[tuple[float, float, bool]], out: Path) -> Path:
+    """Concatenate the kept pieces of the face take's audio, with 12 ms fades at every cut (no clicks)
+    and 30 ms where a cut falls inside joined speech. Pieces that continue each other are one stretch."""
+    joined: list[list] = []
+    for a, b, soft in pieces:
+        if joined and abs(a - joined[-1][1]) < 1e-4:
+            joined[-1][1], joined[-1][2] = b, soft
+        else:
+            joined.append([a, b, soft])
+    filt, parts = [], []
+    for i, (a, b, soft) in enumerate(joined):
+        d, f_in, f_out = b - a, 0.012, 0.03 if soft else 0.012
         filt.append(f"[0:a]atrim={a:.3f}:{b:.3f},asetpts=PTS-STARTPTS,"
-                    f"afade=t=in:d={fade},afade=t=out:st={max(0.0, d - fade):.3f}:d={fade}[p{i}]")
+                    f"afade=t=in:d={f_in},afade=t=out:st={max(0.0, d - f_out):.3f}:d={f_out}[p{i}]")
         parts.append(f"[p{i}]")
-    filt.append("".join(parts) + f"concat=n={len(pieces)}:v=0:a=1[v]")
+    filt.append("".join(parts) + f"concat=n={len(joined)}:v=0:a=1[v]")
     media.run([media.ffmpeg(), "-v", "error", "-y", "-i", str(src), "-filter_complex", ";".join(filt),
                "-map", "[v]", "-ac", "2", "-ar", "48000", "-c:a", "pcm_s16le", str(out)])
     return out
