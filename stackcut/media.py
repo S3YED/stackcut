@@ -145,5 +145,7 @@ def frames(src: Path, start: float, count: int, w: int, h: int):
                 last = np.frombuffer(buf, np.uint8).reshape(h, w, 3)
             yield last
     finally:
+        if p.poll() is None:   # stopped early (a B-roll card that leaves before its clip ends)
+            p.kill()
         p.stdout.close()
         p.wait()

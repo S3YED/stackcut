@@ -1,0 +1,35 @@
+# stackcut edit file, talking head. Written by Claude (the AI editor) from the transcript of the
+# English stackcut launch take: the face only, no screen recording, a graphic on most lines.
+# assets/repo-card.png is a UI card drawn for the demo; the take, the card and the music are not in the repo.
+layout: talk
+face: src/face.mp4
+av_offset: auto                       # the DJI mic runs about 120 ms behind the lips: measured
+hook: "Claude edits my videos now 🤖"
+music: src/ambient.flac              # Eleven Music (ElevenLabs), made on 20 Oct 2026, not in the repo
+style:
+  tightness: tight                    # every pause cut
+  punch: true                         # the face steps in on key words
+  face_grade: {brightness: 0.05, warmth: 0.03, eyes: 0.08}
+  speed: 1.07                         # a touch faster, pitch kept
+  voice: denoise                      # the DJI mic, room noise out, voice natural
+  music_lufs: -32
+  music_duck_db: 4
+  music_mid_cut_db: 6
+fix: {codex: Codex, stackcut: stackcut}
+lines:
+  - {from: 1.20, to: 5.96, beat: 0.3,                                               # hook
+     graphic: {text: "*Claude* took over", word: Claude}}
+  - {from: 10.98, to: 14.98,                                                        # cracked the code with AI
+     graphic: {icon: "🔓", label: code cracked, at: left, word: cracked}}
+  - {from: 29.98, to: 34.36, tight: false,                                          # it animates, it captions, it edits: every "it" kept
+     graphic: {list: [Animates, Captions, Edits]}}
+  - {from: 34.34, to: 37.52, face_zoom: 1.15}                                       # a raw video, and it's ready
+  - {from: 70.56, to: 75.00,                                                        # a free open source GitHub repo
+     graphic: {image: assets/repo-card.png, caption: free and open source}}
+  - {from: 95.82, to: 99.50,                                                        # give this link to your agent
+     graphic: {chat: [{out: "github.com/S3YED/stackcut", word: link}, {in: "On it ✂️", word: Codex}], title: Claude Code}}
+  - {from: 101.80, to: 106.04,                                                      # you give two videos
+     graphic: {count: 2, label: videos in, at: right, word: two}}
+  - {from: 106.38, to: 107.98,                                                      # the rest is done by the AI
+     graphic: {text: "AI does *the rest* 🤖", at: top}}
+  - {from: 121.66, to: 125.08, face_zoom: 1.12}                                     # follow line

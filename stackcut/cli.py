@@ -1,7 +1,8 @@
-"""stackcut: turn a screen recording + a talking-head take into a vertical short.
+"""stackcut: turn a talking-head take (with or without a screen recording) into a vertical short.
 
   stackcut doctor                         check ffmpeg, encoders and Python packages
-  stackcut draft SCREEN FACE [-o edit.yaml]   transcribe, sync and write an automatic first edit
+  stackcut draft FACE [-o edit.yaml]      talking head: transcribe and write a first edit (layout: talk)
+  stackcut draft SCREEN FACE [-o edit.yaml]   screen + face: transcribe, sync and write a first edit (layout: split)
   stackcut render edit.yaml [-o out.mp4]  render the edit (add --preview for a small fast file)
   stackcut lines FACE [--energy]          the transcript as numbered sentences with times (and take energy)
   stackcut frames SCREEN [--every 2]      a contact sheet of the screen recording (to pick zooms and blur)
@@ -75,18 +76,24 @@ def cmd_sync(a: argparse.Namespace) -> None:
 
 
 def cmd_draft(a: argparse.Namespace) -> None:
-    screen_p, face_p = Path(a.screen), Path(a.face)
+    if len(a.files) not in (1, 2):
+        raise SystemExit("draft takes FACE (talking head) or SCREEN FACE (screen recording + face)")
+    face_p = Path(a.files[-1])
+    screen_p = Path(a.files[0]) if len(a.files) == 2 else None
     out = Path(a.out)
     work = out.resolve().parent / f".{out.stem}.stackcut"
     work.mkdir(exist_ok=True)
     fwav = media.extract_wav(face_p, work / "face16k.wav")
     tr = speech.transcribe(fwav, work / "transcript.json", a.model)
-    swav = media.extract_wav(screen_p, work / "screen16k.wav")
-    off, conf = speech.sync_offset(fwav, swav)
-    print(f"· sync: face = screen + {off:.2f} s (confidence {conf:.2f})")
     rel = lambda p: os.path.relpath(os.path.abspath(p), os.path.dirname(os.path.abspath(out)))
-    edit.draft(rel(screen_p), rel(face_p), speech.sentences(tr["words"]), off, media.duration(screen_p), out,
-               speech.speech_runs(fwav))
+    if screen_p is None:
+        edit.draft(rel(face_p), speech.sentences(tr["words"]), out, speech.speech_runs(fwav))
+    else:
+        swav = media.extract_wav(screen_p, work / "screen16k.wav")
+        off, conf = speech.sync_offset(fwav, swav)
+        print(f"· sync: face = screen + {off:.2f} s (confidence {conf:.2f})")
+        edit.draft(rel(face_p), speech.sentences(tr["words"]), out, speech.speech_runs(fwav), rel(screen_p), off,
+                   media.duration(screen_p))
     print(f"✓ wrote {out}. Edit it (or ask your AI to), then: stackcut render {out}")
 
 
@@ -117,7 +124,7 @@ def main() -> None:
     s = sub.add_parser("sync"); s.add_argument("face")
     s.add_argument("--from", dest="start", type=float, default=0.0); s.add_argument("--to", type=float)
     s.set_defaults(fn=cmd_sync)
-    s = sub.add_parser("draft"); s.add_argument("screen"); s.add_argument("face")
+    s = sub.add_parser("draft"); s.add_argument("files", nargs="+", metavar="[SCREEN] FACE")
     s.add_argument("-o", "--out", default="edit.yaml"); s.set_defaults(fn=cmd_draft)
     s = sub.add_parser("render"); s.add_argument("edit"); s.add_argument("-o", "--out")
     s.add_argument("--preview", action="store_true"); s.set_defaults(fn=cmd_render)
