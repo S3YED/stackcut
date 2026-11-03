@@ -100,6 +100,52 @@ Follow CLAUDE.md in the stackcut repo.
 
 [`CLAUDE.md`](CLAUDE.md) teaches the agent the whole job: transcribe, pick the hook, cut the retakes, look at the screen recording, choose zoom targets, blur private data, render, then review the contact sheet before calling it done.
 
+## Several cameras (multicam)
+
+Filmed one take with more than one camera? A phone behind you while you work, the screen recorder, the camera on your face: `layout: multicam` syncs every angle to the face take's mic and lets each line pick what the viewer sees.
+
+```yaml
+layout: multicam
+face: face.mp4                 # the camera with the mic: its sound is the sound of the video
+screen: screen.mp4
+angles:
+  back:
+    file: back.mov             # synced by its own sound; checked against the clap
+    blur: [[0.13, 0.03, 0.87, 0.47]]   # areas to hide in this angle, [x, y, w, h] as fractions (a TV, a second screen)
+    blur_keep_dark: true       # only the lit screen goes soft: your head in front of it stays sharp
+hook: "🚨 PHP got hacked?"
+lines:
+  - {from: 33.7, to: 37.8, view: face, graphic: {text: "*PHP* hacked?", word: PHP}}   # open full face
+  - {from: 38.0, to: 41.0, view: split, zoom: [0.4, 0.4, 1.8]}                          # screen on top, face below
+  - {from: 41.5, to: 43.4, view: back}                                                  # full screen from behind
+  - {from: 45.2, to: 49.3, view: "split:back"}                                          # the back shot on top
+```
+
+| View | What it shows |
+|---|---|
+| `face` | The face fills the frame. Graphics work here as in the talking-head layout. |
+| `split` | The screen recording in its window on top, the face below. |
+| `<angle>` | That angle fills the frame. `crop: [x, y]` on the angle picks its centre. |
+| `split:<angle>` | That angle in the top window instead of the screen, the face below. |
+
+**Clips of their own.** An angle with `clip: true` is a recording that isn't synced to the take: a capture of a web page's animation, a b-roll clip. It plays from each line's `screen_at` (seconds into the clip); `screen_at: continue` picks up where the last line on the same clip stopped, so an intro animation runs on across several lines and then shows the site.
+
+```yaml
+angles:
+  site: {file: broll/site.mp4, clip: true}
+lines:
+  - {from: 78.9, to: 84.6, view: "split:site", screen_at: 0}           # the intro starts
+  - {from: 109.0, to: 117.1, view: "split:site", screen_at: continue}  # ... and runs on into the page
+```
+
+A screen recorder drops frames while a page animates (25 fps with gaps up to 290 ms on a particle hero). Capture the page itself instead: `node tools/capture-page.cjs https://example.com broll/site.mp4 14` steps the page's own clock one frame at a time (frame-exact 30 fps); add `--mode realtime` for animations that run on wall time (CSS on the compositor, workers), which are recorded live and resampled. Needs Node and Playwright.
+
+**Privacy in other angles.** A back shot sees what the face camera doesn't: a second monitor, a TV with a dashboard, a phone on the desk. `blur:` on the angle hides those areas in every frame of it, with a soft edge. Look at a still of every angle before the first render.
+
+**Word edges.** Whisper's word times are often 100 ms or more off, so a cut placed on them can stop the last word while it still sounds. Every cut is moved onto the word's real edge in the sound: the end runs on until the voice has died away, or, when the next word follows without a pause, into the dip it rises out of (with a softer 30 ms fade). A start only moves back into a voiced sound, never into a breath. Two lines that follow each other in the take join without a cut at all. The render prints every cut it moved; the captions keep the words each line chose. `python tools/cut_audit.py edit.yaml` lists any cut that still lands in sound.
+
+**Sync gate.** Each angle is synced to the face take's mic by cross-correlating the sound (10 ms steps), then checked against the clap at the start of the take: the clap is found in the face take, then looked for in the angle where the sound match says it should be. If the two disagree by more than one frame, the render stops. Clap at the start of every take, with all cameras rolling. The face camera's own lip sync is checked as before (`av_offset`).
+
 ## The edit file
 
 ```yaml
@@ -115,7 +161,7 @@ style:
 privacy:
   - {rect: [243, 388, 404, 858]}              # [x, y, w, h] on the screen, the whole video
   - {rect: [652, 126, 528, 92], from: 0, to: 41}   # only between these screen seconds
-fix: {stream: screen}             # caption corrections, word for word
+fix: {stream: screen}             # caption corrections, word for word; "" drops a word (a split "Next" ".js")
 lines:                            # face-take seconds, in the order they play
   - {from: 7.30, to: 12.24, zoom: full}
   - {from: 12.22, to: 17.88, zoom: [0.65, 0.40, 2.0], join: true}
@@ -151,7 +197,7 @@ lines:                            # face-take seconds, in the order they play
 | `music_start` | Skip a track's quiet intro (seconds). |
 | `sfx` | A soft impact on the first frame and small pops on the hook and the end (synthesised, nothing to license). |
 
-Full examples: [`examples/talking-head-demo.yaml`](examples/talking-head-demo.yaml) (a talking head with graphics), [`examples/homepage.yaml`](examples/homepage.yaml) (English), [`examples/whatsapp-nl.yaml`](examples/whatsapp-nl.yaml) (Dutch, with a blurred client screen), and the launch videos [`examples/stackcut-launch.yaml`](examples/stackcut-launch.yaml) and [`examples/stackcut-launch-nl.yaml`](examples/stackcut-launch-nl.yaml) (a tired take made tight: best takes, speed, punch-ins, face grade).
+Full examples: [`examples/php-multicam.yaml`](examples/php-multicam.yaml) (multicam: face, screen and a back shot of one take, a news reel with its fact notes), [`examples/talking-head-demo.yaml`](examples/talking-head-demo.yaml) (a talking head with graphics), [`examples/homepage.yaml`](examples/homepage.yaml) (English), [`examples/whatsapp-nl.yaml`](examples/whatsapp-nl.yaml) (Dutch, with a blurred client screen), and the launch videos [`examples/stackcut-launch.yaml`](examples/stackcut-launch.yaml) and [`examples/stackcut-launch-nl.yaml`](examples/stackcut-launch-nl.yaml) (a tired take made tight: best takes, speed, punch-ins, face grade).
 
 ## How it works
 

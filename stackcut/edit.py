@@ -1,8 +1,9 @@
 """The edit file (edit.yaml): what plays, in which order, and what the picture shows meanwhile.
 
-Two layouts: `split` (a screen recording on top, the face below) and `talk` (the face fills the
-frame; animated graphics per line). Written by `stackcut draft` (automatic) or by you / your AI
-agent, then rendered as is."""
+Three layouts: `split` (a screen recording on top, the face below), `talk` (the face fills the
+frame; animated graphics per line) and `multicam` (several cameras synced to the face take's mic;
+each line picks its view). Written by `stackcut draft` (automatic) or by you / your AI agent, then
+rendered as is."""
 from __future__ import annotations
 
 import difflib
@@ -37,7 +38,7 @@ DEFAULT_STYLE = {
     "denoise_db": 24,                                     # most noise "denoise" may remove; lower keeps more room air
 }
 VOICES = ("denoise", "light", "clean", "isolate")
-LAYOUTS = ("split", "talk")
+LAYOUTS = ("split", "talk", "multicam")
 
 
 @dataclass
@@ -45,7 +46,8 @@ class Line:
     start: float                      # face-take seconds
     end: float
     zoom: object = "auto"             # split: "full", "auto" or [cx, cy, z]
-    screen_at: float | None = None    # split: show this screen moment instead of the synced one
+    screen_at: float | str | None = None   # split / a clip angle: play from this moment ("continue": where
+                                           # the last line on the same source stopped) instead of the synced one
     join: bool = False                # the sentence continues from the line before
     tight: bool = True                # cut pauses and breaths inside the line
     pad_in: float | None = None       # extra lead-in for a soft first word ("I", "If")
@@ -53,6 +55,7 @@ class Line:
     beat: float = 0.0                 # hold this much of the take's own pause after the line (after a hook)
     graphic: tuple | None = None      # talk: (kind, spec, place) from graphics.parse
     face_zoom: float = 1.0            # the face this much closer for the line: a zoom cut
+    view: str = ""                    # multicam: split | face | <angle> | split:<angle>
 
 
 @dataclass
@@ -69,6 +72,12 @@ class Edit:
     privacy: list[dict] = field(default_factory=list)
     style: dict = field(default_factory=lambda: dict(DEFAULT_STYLE))
     fix: dict = field(default_factory=dict)
+    angles: dict = field(default_factory=dict)   # multicam: name -> {"file", "offset", "crop": [x, y], "blur": [[x, y, w, h]]}
+    language: str | None = None       # the take's language for transcription (auto when unset)
+
+
+def _views(angles: dict, screen: bool) -> set[str]:
+    return ({"face"} | ({"split"} if screen else set()) | set(angles) | {f"split:{a}" for a in angles})
 
 
 def load(path: Path) -> Edit:
@@ -77,23 +86,55 @@ def load(path: Path) -> Edit:
     layout = d.get("layout") or ("split" if d.get("screen") else "talk")
     if layout not in LAYOUTS:
         raise SystemExit(f"{path.name}: layout must be one of {', '.join(LAYOUTS)}")
+    angles = {}
+    for name, a in (d.get("angles") or {}).items() if layout == "multicam" else ():
+        a = {"file": a} if isinstance(a, str) else dict(a)
+        if not a.get("file") or not (root / a["file"]).exists():
+            raise SystemExit(f"{path.name}: angle {name} file not found: {root / str(a.get('file'))}")
+        clip = bool(a.get("clip"))           # a recording of its own (a page capture, b-roll): not synced
+        off = "auto" if clip else a.get("offset", "auto")
+        if off != "auto":
+            off = float(off)
+        crop = [float(v) for v in a.get("crop", [0.5, 0.5])]
+        blur = [[float(v) for v in r] for r in a.get("blur") or []]
+        if any(len(r) != 4 or not all(0 <= v <= 1 for v in r) for r in blur):
+            raise SystemExit(f"{path.name}: angle {name} blur: each area is [x, y, w, h] as fractions of the frame (0-1)")
+        angles[str(name)] = {"file": (root / a["file"]).resolve(), "offset": off, "crop": crop, "blur": blur,
+                          "blur_keep_dark": bool(a.get("blur_keep_dark")), "clip": clip}
+    views = _views(angles, bool(d.get("screen")))
     lines = []
     for i, l in enumerate(d.get("lines") or []):
         where = f"{path.name} line {i + 1}"
+        view = ""
+        if layout == "multicam":
+            view = str(l.get("view") or ("split" if d.get("screen") else "face"))
+            if view not in views:
+                raise SystemExit(f"{where}: view {view} is not one of {', '.join(sorted(views))}")
         if "from" not in l or "to" not in l:
             raise SystemExit(f"{where} needs 'from' and 'to' (face-take seconds)")
-        if layout == "talk" and ("zoom" in l or "screen_at" in l):
+        if (layout == "talk" or (layout == "multicam" and view == "face")) and ("zoom" in l or "screen_at" in l):
             raise SystemExit(f"{where}: zoom and screen_at are for the screen (layout: split); "
                              "in layout: talk the face zooms with face_zoom")
-        if l.get("graphic") is not None and layout != "talk":
-            raise SystemExit(f"{where}: graphic works in layout: talk")
+        sat = l.get("screen_at")
+        if sat is not None and sat != "continue":
+            try:
+                sat = float(sat)
+            except (TypeError, ValueError):
+                raise SystemExit(f"{where}: screen_at is a time in seconds or \"continue\"") from None
+        angle = view.split(":", 1)[-1] if view not in ("", "face", "split") else None
+        if sat is not None and angle and not angles[angle]["clip"]:
+            raise SystemExit(f"{where}: screen_at works on the screen and on clip angles; angle {angle} follows "
+                             "the face take's time (give it clip: true if it is a recording of its own)")
+        if l.get("graphic") is not None and not (layout == "talk" or view == "face"):
+            raise SystemExit(f"{where}: graphic works in layout: talk, or on a multicam line with view: face")
         fz = float(l.get("face_zoom", 1.0))
         if not 0.8 <= fz <= 1.6:
             raise SystemExit(f"{where}: face_zoom {fz} is outside 0.8-1.6")
-        lines.append(Line(float(l["from"]), float(l["to"]), l.get("zoom", "auto"), l.get("screen_at"),
+        lines.append(Line(float(l["from"]), float(l["to"]), l.get("zoom", "auto"), sat,
                           bool(l.get("join", False)), bool(l.get("tight", True)), l.get("pad_in"),
                           bool(l.get("cut", False)), float(l.get("beat", 0.0)),
-                          graphics.parse(l["graphic"], root, where) if l.get("graphic") is not None else None, fz))
+                          graphics.parse(l["graphic"], root, where) if l.get("graphic") is not None else None, fz,
+                          view))
     if not lines:
         raise SystemExit(f"{path.name} has no lines")
     style = dict(DEFAULT_STYLE)
@@ -104,7 +145,8 @@ def load(path: Path) -> Edit:
     if style["voice"] not in VOICES:
         raise SystemExit(f"{path.name}: style.voice must be one of {', '.join(VOICES)}")
     music = d.get("music")
-    for key in ("face",) + (("screen",) if layout == "split" else ()) + (("music",) if music else ()):
+    needs_screen = layout == "split" or any(ln.view == "split" for ln in lines)
+    for key in ("face",) + (("screen",) if needs_screen else ()) + (("music",) if music else ()):
         if not d.get(key):
             raise SystemExit(f"{path.name}: needs '{key}:'")
         if not (root / d[key]).exists():
@@ -112,10 +154,10 @@ def load(path: Path) -> Edit:
     av = d.get("av_offset", "auto")
     if av != "auto" and not -1.0 <= float(av) <= 1.0:
         raise SystemExit(f"{path.name}: av_offset {av} is outside -1..1 s")
-    screen = (root / d["screen"]).resolve() if layout == "split" else None
+    screen = (root / d["screen"]).resolve() if layout in ("split", "multicam") and d.get("screen") else None
     return Edit(root, screen, (root / d["face"]).resolve(), lines, layout, d.get("hook") or "",
                 d.get("offset", "auto"), av, (root / music).resolve() if music else None, d.get("privacy") or [], style,
-                {str(k).lower(): str(v) for k, v in (d.get("fix") or {}).items()})
+                {str(k).lower(): str(v) for k, v in (d.get("fix") or {}).items()}, angles, d.get("language"))
 
 
 def _similar(a: str, b: str) -> float:

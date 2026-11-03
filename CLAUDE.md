@@ -58,6 +58,16 @@ For `layout: talk`, give most lines a `graphic:`. Read [docs/talking-head.md](do
 - **No client data:** chat cards are written fresh and generic, images show only the human's own screens or test data.
 - After rendering, check `.edit.stackcut/graphics.json` (when each graphic lands and leaves) next to `words.json`, and look at the sheet: every graphic readable, nothing over the mouth, the captions clear of the cards.
 
+## Multicam: pick the view per line (when there is more than one camera)
+- Open on `view: face` (big face, the hook sticker and an optional graphic) for the first line.
+- The main part is `split`: the screen while you explain what is on it.
+- Cut to a full-screen angle (`back`) on one strong sentence, and use `split:back` while you show what you are doing at the desk. Change the view every 2-3 lines at most: dynamic, never distracting.
+- Look at a still of every angle before the first render. Anything private it sees (a second monitor, a TV with a dashboard, a phone, another person) gets `blur: [[x, y, w, h]]` on that angle, as fractions of its frame. Never cut to an angle that shows a client's screen or another person without it.
+- A low-resolution angle (a phone filming at 720p or less) only goes in the `split:<angle>` window, never full screen.
+- When a line talks about a page whose animation matters (an intro, a particle hero), don't show the screen recording: it stutters. Capture the page with `tools/capture-page.cjs` (clock mode first; `--mode realtime` if its intro runs too fast), add it as a `clip: true` angle and let the intro run across the lines with `screen_at: continue`. Look at a 2 fps sheet of the capture to pick each line's `screen_at`.
+- Read the "word edges" lines the render prints. A line's `to:` only has to land on the last word you want: the cut finds the word's real end. A joined-speech cut where a vowel runs into a vowel can't be placed perfectly; prefer a line end at a pause.
+- Check the printed sync line for every angle: the sound match and the clap must agree.
+
 ## 4. Privacy (do not skip)
 Find every client name, phone number, email, message text, avatar and invoice on screen.
 1. Find the layout changes: pages switching, a panel refreshing, a box opening. Look at the frames sheet, then check single frames around the changes:

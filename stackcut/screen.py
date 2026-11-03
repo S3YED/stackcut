@@ -73,7 +73,8 @@ def view(frame: np.ndarray, cx: float, cy: float, z: float, ww: int, wh: int, to
     top: a fraction of the frame's top that never shows (a browser's tabs and address bar)."""
     sh, sw = frame.shape[:2]
     z = max(z, 1 / (1 - top)) if top else z
-    w, h = sw / z, sh / z
+    bw = min(sw, sh * ww / wh)               # z = 1: the widest part of the frame with the window's shape
+    w, h = bw / z, bw * wh / ww / z          # (a portrait phone angle in a landscape window: a band, moved by cy)
     x0 = min(max(cx * sw - w / 2, 0), sw - w)
     y0 = min(max(cy * sh - h / 2, top * sh), sh - h)
     s = ww / w
