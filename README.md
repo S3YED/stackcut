@@ -21,7 +21,7 @@ stackcut does all of that from two files. You record your screen and, at the sam
 - **Every pause gone.** Voice-activity detection turns breaths and "uhm"s into jump cuts.
 - **Captions that pop.** Word by word, a few words at a time, the keyword highlighted.
 - **A hook on top.** One line, in the text-sticker style viewers already know.
-- **Sound that's ready.** Cleaned voice, optional ducked music bed, mastered to -14 LUFS (the Reels/TikTok target).
+- **Sound that's ready.** Room noise removed without making the voice sound processed, an optional music bed that dips while you talk and stays out of the voice's frequencies, mastered to -14 LUFS (the Reels/TikTok target).
 - **Privacy built in.** Blur boxes on the screen recording with time windows, for client names and messages.
 
 ![Before and after](docs/img/before-after.jpg)
@@ -69,6 +69,7 @@ Follow CLAUDE.md in the stackcut repo.
 screen: screen.mp4
 face: face.mov
 offset: auto                      # face = screen + offset, measured from the audio
+av_offset: auto                   # how late the face take's sound is against its lips (wireless mics)
 hook: "AI rebuilt my site overnight 😳"
 music: bed.mp3                    # optional
 style:
@@ -94,8 +95,24 @@ lines:                            # face-take seconds, in the order they play
 | `tight: false` | Keep the pauses inside this line. |
 | `pad_in` | Extra lead-in for a soft first word ("I", "If") that the cut would clip. |
 | `cut: true` | Jump to this line's zoom instead of easing. |
+| `beat` | Hold this many seconds of the take's own pause after the line, e.g. `beat: 0.3` after the hook. |
 
-Full examples: [`examples/homepage.yaml`](examples/homepage.yaml) (English) and [`examples/whatsapp-nl.yaml`](examples/whatsapp-nl.yaml) (Dutch, with a blurred client screen).
+| Style option | What it does |
+|---|---|
+| `top_crop` | Hide this fraction of the screen's top (a browser's tabs and address bar). |
+| `tightness` | `normal`, or `tight`: about 0.08 s between words at every cut. |
+| `speed` | 1.05-1.1 lifts a slow delivery. The pitch stays the same. |
+| `punch` | The face steps in a little on key words, at most every 2.2 s, so jump cuts read as beats. |
+| `face_grade` | `{brightness, warmth, eyes}`, each about 0.03-0.08: a brighter, warmer face and a little light on the eyes. |
+| `voice` | `denoise` (default): room noise out with DeepFilterNet, the voice itself untouched. `light`: the mic as is, gently compressed. `clean`: FFmpeg denoise for a poor mic. `isolate`: ElevenLabs Voice Isolator (needs `ELEVENLABS_API_KEY`; it gates pauses to silence and reshapes the voice). |
+| `denoise_db` | The most noise `denoise` may remove (default 24 dB). The rest of the original is mixed back in, so breaths and consonants stay and pauses never go dead. |
+| `music_lufs` | The bed's loudness in the pauses, under a -14 LUFS voice (default -32: 18 dB under). |
+| `music_duck_db` | How far the bed dips while you talk (default 4 dB), coming back up in the pauses. |
+| `music_mid_cut_db` | How much of 1-4 kHz is scooped out of the bed so it never sits on the voice (default 4 dB). |
+| `music_start` | Skip a track's quiet intro (seconds). |
+| `sfx` | A soft impact on the first frame and small pops on the hook and the end (synthesised, nothing to license). |
+
+Full examples: [`examples/homepage.yaml`](examples/homepage.yaml) (English), [`examples/whatsapp-nl.yaml`](examples/whatsapp-nl.yaml) (Dutch, with a blurred client screen), and the launch videos [`examples/stackcut-launch.yaml`](examples/stackcut-launch.yaml) and [`examples/stackcut-launch-nl.yaml`](examples/stackcut-launch-nl.yaml) (a tired take made tight: best takes, speed, punch-ins, face grade).
 
 ## How it works
 
@@ -109,12 +126,13 @@ face.mov ───┘                      └─ transcript (Whisper) ─ silen
 ```
 
 1. **Sync.** Both microphones heard the same words. Cross-correlating their loudness finds the offset to 10 ms.
-2. **Transcribe.** faster-whisper gives word timestamps. If a take comes back without punctuation, it runs once more with a punctuated prompt in the same language.
+   **Lip sync.** A camera with a wireless or Bluetooth mic records the sound late: a DJI pocket camera with its wireless mic measured 130-140 ms, four frames, enough to see. stackcut measures it from the take itself, the inner-lip opening ([MediaPipe](https://github.com/google-ai-edge/mediapipe) face landmarks) against the loudness of the speech (a phone recording reads 0 ms), and takes the picture that much earlier than the sound. `av_offset: auto` uses the measurement. A number you set is checked against it: more than one frame off and the render stops. `stackcut sync face.mov` prints the value. The render chain itself is checked with markers instead of lips ([`tools/sync_markers.py`](tools/sync_markers.py)): a flash and a beep on the same frame stay within one frame (+20 ms) through tight cuts, speed-up and frame-rate change. (Lips in a tightly cut video read about 75 ms early, because the cuts trim the lip movement that comes before each phrase, so the take is measured before cutting.) MediaPipe is optional and brings its own OpenCV, so it can live in its own Python: `STACKCUT_SYNC_PYTHON=/path/to/python`.
+2. **Transcribe.** faster-whisper gives word timestamps. If a take comes back without punctuation, it runs once more with a punctuated prompt in the same language. Whisper tends to skip a retake (it hears a repeat and drops it), so every stretch of speech without words is heard once more on its own: every take is there to pick from. `stackcut lines face.mov --energy` adds loudness, pitch movement and pace per sentence, to pick the take with the most conviction.
 3. **Cut.** Silero VAD finds the voiced parts of each line and every pause becomes a jump cut. A cut never clips a word.
 4. **Frame the screen.** The screen recording goes in a rounded window with a soft shadow on a blurred gradient. For each line the camera eases (0.6 s, cubic) to that line's target, which you choose or `auto` measures from frame differences.
 5. **Frame the face.** YuNet finds the face 10 times a second. The centre is smoothed over about 1.3 s and the size over about 3 s, so it never jitters. The face fills about a third of the panel. The white shirt under it sets the white balance.
 6. **Captions.** Words land on the output timeline, a few per page; spoken words light up and the keyword gets the accent pill.
-7. **Sound.** The kept audio is cut with 12 ms fades, cleaned (ElevenLabs Voice Isolator when `ELEVENLABS_API_KEY` is set, an FFmpeg chain otherwise), laid over an optional ducked music bed, and mastered to -14 LUFS.
+7. **Sound.** The kept audio is cut with 12 ms fades. [DeepFilterNet](https://github.com/Rikorose/DeepFilterNet) takes the room noise out at 48 kHz with an attenuation limit, so the voice keeps its air (it beat a cloud voice isolator in our tests: the waveform stays 0.96 correlated with the mic, against 0.64). A gentle compressor, a little presence and a soft de-esser follow, then the voice is set to -14 LUFS. The music bed has its 1-4 kHz scooped out, sits at `music_lufs` in the pauses and dips `music_duck_db` while you talk. The mix gets one fixed gain and a peak limiter: no level pumping. Speed changes happen on the voice before mixing, so the sound is encoded once (AAC 320 kb/s).
 8. **Encode.** H.264 1080x1920, 30 fps (hardware VideoToolbox on a Mac, x264 elsewhere), plus a contact sheet to review.
 
 ## Recording tips
@@ -122,6 +140,7 @@ face.mov ───┘                      └─ transcript (Whisper) ─ silen
 - Record the screen and your face **at the same time**. Your phone in front of you (landscape or portrait both work), any screen recorder on the computer. Both mics on.
 - Say each line once; when you mess up, just say it again. The last take wins.
 - iPhone HDR footage is fine. On a Mac it is tone-mapped in hardware.
+- A wireless mic on the camera (DJI and the like) records the sound a few frames late. stackcut corrects it (`av_offset`), but a clap at the start of the take makes it easy to check by eye.
 - Blur client data: `stackcut frames screen.mp4` makes a contact sheet so you (or your AI) can find what to cover.
 
 ## Credits
@@ -139,6 +158,8 @@ It stands on these open-source projects:
 | [YuNet](https://github.com/opencv/opencv_zoo/tree/main/models/face_detection_yunet) by Shiqi Yu (OpenCV Zoo) | face detection (downloaded on first run) | MIT |
 | [NumPy](https://numpy.org), [Pillow](https://python-pillow.org), [PyYAML](https://pyyaml.org) | arrays, text drawing, the edit file | BSD / MIT-CMU / MIT |
 | [Geist](https://github.com/vercel/geist-font) by Vercel | caption and sticker font (bundled) | SIL OFL 1.1 |
+| [MediaPipe](https://github.com/google-ai-edge/mediapipe) face landmarker by Google | lip-sync measurement (optional; model downloaded on first use, checksum pinned) | Apache 2.0 |
+| [DeepFilterNet](https://github.com/Rikorose/DeepFilterNet) by Hendrik Schröter | room noise removal (its command-line build, downloaded on first use, checksum pinned) | MIT / Apache 2.0 |
 
 The screen look is inspired by [OpenScreen](https://github.com/siddharthvaddem/openscreen) and Screen Studio. The example videos were recorded with [Cap](https://cap.so).
 

@@ -50,10 +50,11 @@ def transcribe(wav: Path, out: Path, model: str = "large-v3-turbo", language: st
     m = WhisperModel(model, device="auto", compute_type="int8")
     audio = load_wav(wav)   # samples, not a path: faster-whisper's own decoder depends on a drifting PyAV
 
-    def run(lang, prompt=None):
-        segs, info = m.transcribe(audio, word_timestamps=True, beam_size=5, language=lang, vad_filter=False,
+    def run(lang, prompt=None, a=0.0, b=None):
+        clip = audio[int(a * SR):None if b is None else int(b * SR)]
+        segs, info = m.transcribe(clip, word_timestamps=True, beam_size=5, language=lang, vad_filter=False,
                                   condition_on_previous_text=prompt is not None, initial_prompt=prompt)
-        return [{"w": w.word.strip(), "s": round(w.start, 3), "e": round(w.end, 3)}
+        return [{"w": w.word.strip(), "s": round(a + w.start, 3), "e": round(a + w.end, 3)}
                 for s in segs for w in (s.words or []) if w.word.strip()], info.language
 
     words, lang = run(language)
@@ -62,10 +63,57 @@ def transcribe(wav: Path, out: Path, model: str = "large-v3-turbo", language: st
         again, _ = run(lang, PROMPTS[lang])
         if _punctuated(again) and len(again) >= 0.8 * len(words):
             words = again
+    words = fill_gaps(words, wav, lambda a, b: run(lang, PROMPTS.get(lang), a, b)[0])
     data = {"language": lang, "words": tidy(words, wav)}
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(data, ensure_ascii=False, indent=0))
     return data
+
+
+STRETCHED = 1.0   # a "word" longer than this is whisper stretching it over a pause or skipped speech
+
+
+def fill_gaps(words: list[dict], wav: Path, hear) -> list[dict]:
+    """Whisper tends to skip a retake (it hears a repeat and drops it) and stretches the word before
+    it over the skipped speech. So: clip stretched words to their own stretch of speech, then hear
+    every stretch of speech that still has no words once more on its own (`hear(a, b)` returns the
+    words between a and b), so every take is there to pick from."""
+    runs = speech_runs(wav)
+    out = []
+    for w in words:
+        if w["e"] - w["s"] > STRETCHED:
+            own = [b for a, b in runs if a <= w["s"] + 0.2 and b > w["s"]]
+            if own and own[-1] + 0.05 < w["e"] - 0.3:
+                w = {**w, "e": round(own[-1] + 0.05, 3)}
+        out.append(w)
+    spans = sorted((w["s"], w["e"]) for w in out)
+    holes: list[list[float]] = []
+    for a, b in runs:
+        cur = a
+        for s, e in spans:
+            if e <= cur or s >= b:
+                continue
+            if s > cur:
+                holes.append([cur, s])
+            cur = max(cur, e)
+        if b > cur:
+            holes.append([cur, b])
+    merged: list[list[float]] = []
+    for h in holes:
+        if merged and h[0] - merged[-1][1] < 0.35:
+            merged[-1][1] = h[1]
+        else:
+            merged.append(h)
+    for h0, h1 in (h for h in merged if h[1] - h[0] >= 0.5):
+        new = []
+        for w in hear(max(0.0, h0 - 1.0), h1 + 1.0):
+            mid = (w["s"] + w["e"]) / 2
+            if h0 - 0.1 <= mid <= h1 + 0.1 and not any(s <= mid <= e for s, e in spans):
+                new.append(w)
+        if new:
+            print(f"  heard {len(new)} more words at {h0:.1f} s (a retake whisper skipped)")
+            out += new
+    return sorted(out, key=lambda w: w["s"])
 
 
 def tidy(words: list[dict], wav: Path | None = None) -> list[dict]:
@@ -141,11 +189,44 @@ def speech_runs(wav: Path) -> list[tuple[float, float]]:
     return _vad_cache[key]
 
 
-def tighten(wav: Path, words: list[dict], a: float, b: float, pad_in: float = PAD_IN) -> list[tuple[float, float]]:
+LEVEL_HOP = 0.02
+_level_cache: dict[str, tuple[np.ndarray, float]] = {}
+
+
+def _voiced(wav: Path, t: float) -> bool:
+    """Is the 20 ms at t louder than the take's room tone (its 10th-percentile level) by 4 dB or more?"""
+    key = str(wav)
+    if key not in _level_cache:
+        x, n = load_wav(wav), int(LEVEL_HOP * SR)
+        frames = x[: len(x) // n * n].reshape(-1, n)
+        db = 20 * np.log10(np.sqrt((frames ** 2).mean(1)) + 1e-9)
+        _level_cache[key] = (db, float(np.percentile(db, 10)))
+    db, floor = _level_cache[key]
+    i = int(round(t / LEVEL_HOP, 6))
+    return 0 <= i < len(db) and db[i] > floor + 4
+
+
+TIGHTNESS = {   # (air before a run, air after a run, pauses shorter than this stay inside a run)
+    "normal": (PAD_IN, PAD_OUT, MERGE_GAP),
+    "tight": (0.05, 0.03, 0.06),     # about 0.08 s between words at every cut: no dead air at all
+}
+
+
+def tighten(wav: Path, words: list[dict], a: float, b: float, pad_in: float | None = None,
+            tightness: str = "normal") -> list[tuple[float, float]]:
     """Keep only the voiced parts of [a, b]: every pause and breath becomes a jump cut.
-    Never clips a word: a run that just misses a word edge is stretched over it."""
+    Never clips a word: a run that just misses a word edge is stretched over it, and a soft word the
+    voice detector missed in a noisy room ("een", "Wat") but whisper heard right next to a run is kept.
+    pad_in: extra lead-in before the line's first run only."""
+    t_in, pad_out, merge_gap = TIGHTNESS.get(tightness, TIGHTNESS["normal"])
+    first_in = t_in if pad_in is None else pad_in
     ws = [(w["s"], w["e"]) for w in words if w["e"] > a and w["s"] < b]
-    runs = [(max(a, s - pad_in), min(b, e + PAD_OUT)) for s, e in speech_runs(wav) if e > a and s < b]
+    voiced = [(s, e) for s, e in speech_runs(wav) if e > a and s < b]
+    runs = [(max(a, s - (first_in if k == 0 else t_in)), min(b, e + pad_out)) for k, (s, e) in enumerate(voiced)]
+    def heard(ws_: float, we: float) -> float:   # share of a word the voice detector heard
+        return sum(max(0.0, min(we, ve) - max(ws_, vs)) for vs, ve in voiced) / max(we - ws_, 1e-3)
+
+    soft = [(ws_, we) for ws_, we in ws if heard(ws_, we) < 0.5]
     fixed = []
     for s, e in runs:
         for ws_, we in ws:
@@ -154,10 +235,19 @@ def tighten(wav: Path, words: list[dict], a: float, b: float, pad_in: float = PA
                     s = max(a, ws_ - 0.02)
                 if 0 < we - e < 0.15:
                     e = min(b, we + 0.02)
+        for ws_, we in soft:     # whisper heard it, the voice detector didn't: follow the voice's energy into it
+            if ws_ < s < we + 0.15:
+                lo = max(a, ws_ - 0.02, s - 0.25)
+                while s - LEVEL_HOP >= lo and _voiced(wav, s - LEVEL_HOP):
+                    s -= LEVEL_HOP
+            if ws_ - 0.15 < e < we:
+                hi = min(b, we + 0.02, e + 0.25)
+                while e + LEVEL_HOP <= hi and _voiced(wav, e):
+                    e += LEVEL_HOP
         fixed.append((s, e))
     merged: list[list[float]] = []
     for s, e in sorted(fixed):
-        if merged and s - merged[-1][1] < MERGE_GAP:
+        if merged and s - merged[-1][1] < merge_gap:
             merged[-1][1] = max(merged[-1][1], e)
         else:
             merged.append([s, e])
@@ -171,7 +261,38 @@ def words_in(words: list[dict], a: float, b: float) -> list[dict]:
     out = []
     for w in words:
         overlap = min(w["e"], b) - max(w["s"], a)
-        lead_in = w["s"] < a and overlap >= 0.06
+        lead_in = w["s"] < a and overlap >= 0.04
         if overlap >= min(0.12, 0.5 * (w["e"] - w["s"])) or lead_in:
             out.append(w)
     return out
+
+
+# ---------------------------------------------------------------- take energy
+
+def _pitch(frame: np.ndarray) -> float | None:
+    """Fundamental frequency (Hz) of one 40 ms frame by autocorrelation, or None when unvoiced."""
+    f = frame - frame.mean()
+    if np.sqrt((f ** 2).mean()) < 0.01:
+        return None
+    ac = np.correlate(f, f, "full")[len(f) - 1:]
+    lo, hi = SR // 400, SR // 75
+    lag = lo + int(np.argmax(ac[lo:hi]))
+    return SR / lag if ac[lag] > 0.3 * ac[0] else None
+
+
+def energy(wav: Path, words: list[dict], a: float, b: float) -> dict:
+    """How much conviction a take carries: loudness of the voiced part, pitch movement, pace and
+    the longest pause. Louder, more melody, steady pace and no long pauses read as awake."""
+    audio = load_wav(wav)
+    seg = audio[int(a * SR):int(b * SR)]
+    frames = seg[: len(seg) // 640 * 640].reshape(-1, 640)
+    rms = np.sqrt((frames ** 2).mean(1))
+    voiced = rms > max(0.01, np.percentile(rms, 30))
+    loud = 20 * np.log10(rms[voiced].mean() + 1e-9) if voiced.any() else -60.0
+    f0 = [p for fr, v in zip(frames, voiced) if v for p in [_pitch(fr)] if p]
+    semis = 12 * np.log2(np.array(f0) / np.median(f0)) if len(f0) > 5 else np.array([0.0])
+    ws = [w for w in words if w["s"] >= a - 0.05 and w["e"] <= b + 0.05]
+    dur = max(0.1, b - a)
+    gaps = [n["s"] - w["e"] for w, n in zip(ws, ws[1:])]
+    return {"loud_db": round(float(loud), 1), "pitch_range": round(float(np.percentile(semis, 90) - np.percentile(semis, 10)), 1),
+            "words_per_s": round(len(ws) / dur, 2), "longest_pause": round(max(gaps, default=0.0), 2)}

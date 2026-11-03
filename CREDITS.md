@@ -12,6 +12,8 @@
 | [Silero VAD](https://github.com/snakers4/silero-vad) | MIT | Ships inside faster-whisper. |
 | [OpenCV](https://github.com/opencv/opencv) (opencv-python-headless) | Apache 2.0 | |
 | [YuNet face detector](https://github.com/opencv/opencv_zoo/tree/main/models/face_detection_yunet) | MIT, Copyright (c) 2020 Shiqi Yu | Downloaded to `~/.cache/stackcut` on first run and checked by SHA-256. |
+| [MediaPipe](https://github.com/google-ai-edge/mediapipe) face landmarker | Apache 2.0, Copyright Google LLC | Optional, for lip-sync measurement. The model is downloaded to `~/.cache/stackcut` on first use and checked by SHA-256. |
+| [DeepFilterNet](https://github.com/Rikorose/DeepFilterNet) 0.5.6 (`deep-filter` command-line build) | MIT / Apache 2.0, Copyright (c) Hendrik Schröter | Room noise removal for `voice: denoise`. Downloaded to `~/.cache/stackcut/bin` on first use and checked by SHA-256, or used from PATH. |
 | [NumPy](https://numpy.org) | BSD 3-Clause | |
 | [Pillow](https://python-pillow.org) | MIT-CMU (HPND) | |
 | [PyYAML](https://pyyaml.org) | MIT | |

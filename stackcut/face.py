@@ -123,3 +123,27 @@ def panel(frame: np.ndarray, cam: tuple[float, float, float], pw: int, ph: int,
     cy = min(max(y, ph * eye_line / scale), sh - ph * (1 - eye_line) / scale)
     m = np.float32([[scale, 0, pw / 2 - cx * scale], [0, scale, ph * eye_line - cy * scale]])
     return cv2.warpAffine(frame, m, (pw, ph), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+
+
+def grade_lut(lut: np.ndarray, brightness: float = 0.0, warmth: float = 0.0) -> np.ndarray:
+    """Stack a brighter, warmer grade on top of the white-balance LUT: brightness lifts the mids
+    (a gentle gamma, highlights stay put), warmth nudges red up and blue down."""
+    if not brightness and not warmth:
+        return lut
+    x = np.arange(256, dtype=np.float32) / 255
+    lifted = x ** (1 / (1 + 2.5 * brightness))
+    out = []
+    for j, gain in enumerate((1 - warmth, 1.0, 1 + warmth)):     # B, G, R
+        out.append(np.clip(np.interp(lut[:, j].astype(np.float32) / 255, x, lifted) * 255 * gain, 0, 255))
+    return np.stack(out, 1).astype(np.uint8)
+
+
+def eye_light(pw: int, ph: int, strength: float, eye_line: float = 0.44, fill: float = 0.36) -> np.ndarray | None:
+    """A soft spot of light over the eyes (multiplier map for the panel): lifts tired eyes a little."""
+    if not strength:
+        return None
+    yy, xx = np.mgrid[0:ph, 0:pw].astype(np.float32)
+    face_px = fill * ph
+    cy, sx, sy = ph * eye_line - 0.08 * face_px, 0.45 * face_px, 0.22 * face_px
+    g = np.exp(-(((xx - pw / 2) / sx) ** 2 + ((yy - cy) / sy) ** 2) / 2)
+    return (1 + strength * g)[..., None].astype(np.float32)

@@ -1,28 +1,34 @@
-# stackcut edit file: "My AI edited this whole video" (Seyed Hosseini, 20 Oct 2026, English)
-# Written by Claude (the AI editor) from the transcript, rendered with stackcut.
-# Times are seconds in the FACE take.
-screen: screen-plus-edit.mp4          # the screen recording, then this very file on screen (from 131.3 s)
-face: face.mp4
+# stackcut edit file, written by Claude (the AI editor) from the transcript. Times are in the face take.
+screen: src/screen-plus-edit.mp4      # the screen recording, then this file on screen (from 131.3 s)
+face: src/face.mp4
 offset: -4.29                         # face = screen - 4.29 s, measured from the audio
+av_offset: 0.13                       # the DJI mic runs 130 ms behind the lips (measured)
 hook: "My AI edited this whole video 🤖"
-music: bed.mp3
+music: src/ambient.flac              # Eleven Music (ElevenLabs), made on 20 Oct 2026
 style:
   top_crop: 0.107                     # browser tabs and address bar stay out of frame
-  music_lufs: -28
+  tightness: tight                    # about 0.08 s between words: every pause cut
+  punch: true                         # the face steps in on key words
+  face_grade: {brightness: 0.05, warmth: 0.03, eyes: 0.08}
+  speed: 1.07                         # a touch faster, pitch kept
+  voice: denoise                      # the DJI mic, room noise out, voice natural
+  music_lufs: -32                     # a soft ambient bed, 18 dB under the voice
+  music_duck_db: 4                    # dips while I talk
+  music_mid_cut_db: 6                 # 1-4 kHz scooped out: no clash with the voice
 privacy:
   - {rect: [985, 150, 535, 1070], from: 30, to: 63}     # Instagram comments: other people
   - {rect: [1760, 1150, 120, 60], from: 0, to: 63}      # Instagram message avatars
 fix: {reposts: repos, codex: Codex, stackcut: stackcut}
 lines:
-  - {from: 1.20, to: 6.00, zoom: [0.72, 0.64, 2.0]}                      # I have always struggled making content, until Claude took over for me.
-  - {from: 22.56, to: 29.96, zoom: [0.79, 0.64, 2.4], screen_at: 10.3}   # See, yesterday I posted a video that combines a few GitHub repos ...
-  - {from: 29.98, to: 34.36, zoom: [0.36, 0.52, 1.5], tight: false}      # It animates, it captions, it edits, everything for me done automatically. (soft words: keep the pauses)
-  - {from: 34.34, to: 37.56, zoom: [0.36, 0.45, 2.0]}                    # I just need to give it a raw video, and it's ready.
-  - {from: 70.56, to: 75.00, zoom: [0.41, 0.42, 1.6]}                    # So I created this system into a free open source GitHub repo.
-  - {from: 75.00, to: 76.74, zoom: [0.41, 0.19, 2.6], screen_at: 76.0}   # You can find it under stackcut.
-  - {from: 92.82, to: 95.64, zoom: [0.41, 0.55, 1.9]}                    # So this GitHub repo allows you to make videos just like this.
-  - {from: 95.82, to: 99.52, zoom: [0.41, 0.25, 2.2]}                    # You only need to give this link to your Claude Codex or your agent.
-  - {from: 101.80, to: 106.06, zoom: [0.41, 0.48, 1.8], screen_at: 81.8} # And alongside that, you will give two videos ...
-  - {from: 106.38, to: 108.00, zoom: [0.42, 0.7, 1.6], screen_at: 131.6} # The rest will be done by the AI.  (this file, on screen)
-  - {from: 108.26, to: 112.30, zoom: [0.41, 0.53, 1.45], screen_at: 88.8} # It will caption the video, make sure that your screen is zoomed in and looks proper,
-  - {from: 121.66, to: 125.10, zoom: full}                               # If you want to know more and learn about AI, follow me for more.
+  - {from: 1.20, to: 6.00, zoom: [0.72, 0.64, 2.0]}                        # hook: the strongest take
+  - {from: 23.10, to: 29.96, zoom: [0.79, 0.64, 2.4], screen_at: 10.3}     # yesterday I posted ...
+  - {from: 29.98, to: 34.36, zoom: [0.36, 0.52, 1.5], tight: false}        # It animates, it captions
+  - {from: 34.34, to: 37.56, zoom: [0.36, 0.45, 2.0]}                      # just a raw video
+  - {from: 70.56, to: 75.00, zoom: [0.41, 0.42, 1.6]}                      # a free open source repo
+  - {from: 75.00, to: 76.74, zoom: [0.41, 0.19, 2.6], screen_at: 76.0}     # find it under stackcut
+  - {from: 92.82, to: 95.64, zoom: [0.41, 0.55, 1.9]}                      # videos just like this
+  - {from: 95.82, to: 99.52, zoom: [0.41, 0.25, 2.2]}                      # give it to your agent
+  - {from: 101.80, to: 106.06, zoom: [0.41, 0.48, 1.8], screen_at: 81.8}   # you give two videos
+  - {from: 106.38, to: 108.00, zoom: [0.32, 0.42, 1.6], screen_at: 131.6}  # the rest: AI (this file)
+  - {from: 108.26, to: 112.30, zoom: [0.41, 0.53, 1.45], screen_at: 88.8}  # captions, zooms
+  - {from: 121.66, to: 125.10, zoom: full}                                 # follow me
