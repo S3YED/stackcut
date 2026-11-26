@@ -77,6 +77,42 @@ def keyword(tokens: tuple[str, ...]) -> int:
 
 
 @lru_cache(maxsize=4096)
+@lru_cache(maxsize=4096)
+def render_chip(tokens: tuple[str, ...], active: int, accent: tuple[int, int, int], size: int = 58,
+                max_w: int = 900) -> np.ndarray:
+    """The editorial caption: one quiet ink label. Spoken words in white, the ones to come dimmed,
+    the keyword in the accent colour. No outline, no pill, no bounce."""
+    f = font(str(STICKER_FONT), size)
+    space = int(f.getlength(" "))
+    lines, cur, cur_w = [], [], 0
+    for i, t in enumerate(tokens):
+        tw = f.getlength(t)
+        if cur and cur_w + space + tw > max_w:
+            lines.append(cur)
+            cur, cur_w = [], 0
+        cur_w += (space if cur else 0) + tw
+        cur.append(i)
+    lines.append(cur)
+    asc, desc = f.getmetrics()
+    pad_x, pad_y, line_h, m = 30, 16, int(size * 1.22), 20
+    widths = [sum(f.getlength(tokens[i]) for i in l) + space * (len(l) - 1) for l in lines]
+    bw, bh = int(max(widths)) + 2 * pad_x + 2 * m, line_h * (len(lines) - 1) + asc + desc + 2 * pad_y + 2 * m
+    sh = Image.new("L", (bw, bh))
+    ImageDraw.Draw(sh).rounded_rectangle([m, m + 8, bw - m, bh - m + 8], radius=20, fill=70)
+    img = Image.merge("RGBA", (*Image.new("RGB", (bw, bh)).split(), sh.filter(ImageFilter.GaussianBlur(10))))
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle([m, m, bw - m, bh - m], radius=20, fill=(16, 17, 20, 242))
+    key = keyword(tokens)
+    for li, (line, lw) in enumerate(zip(lines, widths)):
+        x, y = (bw - lw) / 2, m + pad_y + li * line_h
+        for i in line:
+            col = (accent if i == key else (255, 255, 255)) + (255,) if i <= active else (255, 255, 255, 96)
+            d.text((x, y), tokens[i], font=f, fill=col)
+            x += f.getlength(tokens[i]) + space
+    return np.asarray(img)
+
+
+@lru_cache(maxsize=4096)
 def render_page(tokens: tuple[str, ...], active: int, accent: tuple[int, int, int], size: int = 70,
                 max_w: int = 960) -> np.ndarray:
     """Spoken words light up, unspoken ones wait dimmed, and the page's keyword gets the accent pill."""
@@ -114,13 +150,14 @@ def render_page(tokens: tuple[str, ...], active: int, accent: tuple[int, int, in
     return np.asarray(Image.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(6)), img))
 
 
-def caption_at(pages: list[Page], t: float, accent: tuple[int, int, int]) -> np.ndarray | None:
+def caption_at(pages: list[Page], t: float, accent: tuple[int, int, int], look: str = "classic") -> np.ndarray | None:
     for p in pages:
         if p.start <= t < p.end:
             active = max((i for i, w in enumerate(p.words) if w.start <= t), default=0)
-            img = render_page(tuple(display(w.text) for w in p.words), active, accent)
+            draw = render_chip if look == "editorial" else render_page
+            img = draw(tuple(display(w.text) for w in p.words), active, accent)
             k = min(1.0, (t - p.start) / POP)
-            s = 0.86 + 0.14 * (1 - (1 - k) ** 3)
+            s = (0.96 + 0.04 * (1 - (1 - k) ** 3)) if look == "editorial" else 0.86 + 0.14 * (1 - (1 - k) ** 3)
             if s < 0.999:
                 h, w = img.shape[:2]
                 img = np.asarray(Image.fromarray(img).resize((max(1, int(w * s)), max(1, int(h * s))),
@@ -144,9 +181,14 @@ def _emoji_font(size: int):
 
 
 @lru_cache(maxsize=16)
-def sticker(text: str, size: int = 64, max_w: int = 960, ink: tuple[int, int, int] = (8, 11, 18)) -> np.ndarray:
+def sticker(text: str, size: int = 64, max_w: int = 960, ink: tuple[int, int, int] = (8, 11, 18),
+            look: str = "classic") -> np.ndarray:
     """The hook: ink on a white rounded box, the native text-sticker look of Reels and TikTok.
-    One line; it shrinks to fit rather than wrap (write hooks of about 28 characters)."""
+    One line; it shrinks to fit rather than wrap (write hooks of about 28 characters).
+    look "editorial": a quieter label, a little smaller, with a hairline."""
+    serif = look == "editorial"   # the editorial label: same Geist, a squarer box with a hairline
+    if serif and size == 64:
+        size = 58
     f = font(str(STICKER_FONT), size)
     ef, escale = _emoji_font(size)
     if ef is None:
@@ -161,13 +203,14 @@ def sticker(text: str, size: int = 64, max_w: int = 960, ink: tuple[int, int, in
         runs.append((text[pos:], False))
     width = sum(ef.getlength(t) * escale if e else f.getlength(t) for t, e in runs)
     if width > max_w - 60 and size > 40:
-        return sticker(text, int(size * (max_w - 60) / width), max_w, ink)
+        return sticker(text, int(size * (max_w - 60) / width), max_w, ink, look)
     asc, desc = f.getmetrics()
-    pad_x, pad_y = 26, 14
+    pad_x, pad_y = (34, 12) if serif else (26, 14)
     bw, bh = int(width) + 2 * pad_x + 4, asc + desc + 2 * pad_y + 4
     img = Image.new("RGBA", (bw, bh))
     d = ImageDraw.Draw(img)
-    d.rounded_rectangle([2, 2, bw - 2, bh - 2], radius=18, fill=(255, 255, 255, 255))
+    d.rounded_rectangle([2, 2, bw - 2, bh - 2], radius=12 if serif else 18, fill=(255, 255, 255, 255),
+                        outline=(16, 17, 20, 60) if serif else None, width=1)
     x, y = pad_x + 2, pad_y + 2
     for t, is_emoji in runs:
         if is_emoji:
@@ -197,7 +240,8 @@ def blend(dst: np.ndarray, rgba: np.ndarray, cx: int, cy: int, opacity: float = 
     region[:] = (src[..., 2::-1] * a + region * (1 - a)).astype(np.uint8)
 
 
-def progress(dst: np.ndarray, frac: float, accent_bgr: tuple[int, int, int], y: int = 150, margin: int = 60) -> None:
+def progress(dst: np.ndarray, frac: float, accent_bgr: tuple[int, int, int], y: int = 150, margin: int = 60,
+             thick: int = 6) -> None:
     x0, bw = margin, dst.shape[1] - 2 * margin
-    dst[y:y + 6, x0:x0 + bw] = (dst[y:y + 6, x0:x0 + bw] * 0.6 + 255 * 0.4).astype(np.uint8)
-    dst[y:y + 6, x0:x0 + int(bw * min(1.0, frac))] = accent_bgr
+    dst[y:y + thick, x0:x0 + bw] = (dst[y:y + thick, x0:x0 + bw] * 0.6 + 255 * 0.4).astype(np.uint8)
+    dst[y:y + thick, x0:x0 + int(bw * min(1.0, frac))] = accent_bgr

@@ -20,6 +20,7 @@ FACE_TOP = 1092              # split: face panel from here to the bottom
 WIN_X, WIN_W = 40, 1000      # split: the screen window
 WIN_BAND = (340, 1000)       # split: vertical room for the window
 HOOK_Y, CAPTION_Y = 268, 1040
+FACE_CARD = (40, FACE_TOP, 1000, H - FACE_TOP - 40)   # editorial theme: the face as a card (x, y, w, h)
 
 
 @dataclass
@@ -243,7 +244,9 @@ class Split:
             win_h = WIN_BAND[1] - WIN_BAND[0]
             win_w = round(win_h * self.sw / self.sh)
         win_y = WIN_BAND[0] + (WIN_BAND[1] - WIN_BAND[0] - win_h) // 2
-        self.win = screen.Window(W, H, (W - win_w) // 2, win_y, win_w, win_h, 28, st["background"], st["base"])
+        self.card = st.get("theme") == "editorial"
+        self.win = screen.Window(W, H, (W - win_w) // 2, win_y, win_w, win_h, 28, st["background"], st["base"],
+                                 cards=[FACE_CARD] if self.card else ())
         self.blurs = [(r["rect"], float(r.get("from", 0)), float(r.get("to", 1e9))) for r in e.privacy]
         self.fade = np.linspace(0.55, 0, 90, dtype=np.float32)[:, None, None]
         self.targets = []
@@ -282,7 +285,10 @@ class Split:
             if rects:
                 sf = screen.blur(sf, rects)
             self.win.draw(canvas, screen.view(sf, *self.cam, self.win.w, self.win.h, self.top_crop))
-        if ff is not None:
+        if ff is not None and self.card:
+            x, y, w, h = FACE_CARD
+            screen.put_card(canvas, self.look.panel(ff, cam_at, w, h, fill), x, y, 28)
+        elif ff is not None:
             fpanel = self.look.panel(ff, cam_at, W, H - FACE_TOP, fill).astype(np.float32)
             fpanel[:90] *= 1 - self.fade
             canvas[FACE_TOP:] = fpanel.astype(np.uint8)
@@ -345,11 +351,15 @@ def render(edit_path: Path, out: Path, model: str = "large-v3-turbo", preview: b
         cues = [c for g in gs for c in graphics.cues(g)] + [(t, "whoosh") for t in tk.moves()]
         sp = Split(e, sproxy, pieces, look) if sproxy else None
         win = sp.win if sp else screen.Window(W, H, (W - WIN_W) // 2, WIN_BAND[0], WIN_W, round(WIN_W * 9 / 16), 28,
-                                              st["background"], st["base"])
-        frame_layout = multicam.Multi(e, sp, tk.draw, angles, look, win)
+                                              st["background"], st["base"],
+                                              cards=[FACE_CARD] if st.get("theme") == "editorial" else ())
+        frame_layout = multicam.Multi(e, sp, tk.draw, angles, look, win, FACE_CARD if st.get("theme") == "editorial" else None)
         views = {}
         for ln in e.lines:
             views[ln.view] = views.get(ln.view, 0) + 1
+        for i in range(1, len(e.lines)):   # a soft swish as the picture changes view
+            if e.lines[i].view != e.lines[i - 1].view:
+                cues.append((max(0.0, starts[i] - 0.06), "swish"))
         print("  views: " + ", ".join(f"{v} x{n}" for v, n in views.items()) + (f", {len(gs)} graphics" if gs else ""))
     else:
         frame_layout = Split(e, sproxy, pieces, look)
@@ -365,7 +375,8 @@ def render(edit_path: Path, out: Path, model: str = "large-v3-turbo", preview: b
     levels = audio.master(voice, mix, e.music, float(st["music_lufs"]), cleaned, bool(st.get("sfx", True)),
                           chain="clean" if st["voice"] == "clean" else "light", speed=speed,
                           music_start=float(st["music_start"]), duck_db=float(st["music_duck_db"]),
-                          mid_cut_db=float(st["music_mid_cut_db"]), cues=[(t / speed, kind) for t, kind in cues])
+                          mid_cut_db=float(st["music_mid_cut_db"]), cues=[(t / speed, kind) for t, kind in cues],
+                          sfx_pack=(e.root / str(st["sfx_pack"])) if st.get("sfx_pack") else None)
     if "bed_lufs" in levels:
         print(f"  voice {levels['voice_lufs']:.1f} LUFS, music bed {levels['bed_lufs']:.1f} LUFS "
               f"({levels['voice_lufs'] - levels['bed_lufs']:.0f} dB under the voice)")
@@ -385,7 +396,11 @@ def render(edit_path: Path, out: Path, model: str = "large-v3-turbo", preview: b
         n = sum(1 for x in punches if x <= t)
         return 1.10 if n % 2 else 1.0
     accent_bgr = accent[::-1]
-    hook = captions.sticker(e.hook) if e.hook else None
+    theme = st.get("theme", "classic")
+    cap_accent = accent
+    if st.get("caption_accent"):
+        cap_accent = tuple(int(str(st["caption_accent"]).lstrip("#")[i:i + 2], 16) for i in (0, 2, 4))
+    hook = captions.sticker(e.hook, look=theme) if e.hook else None
 
     venc = media.video_encoder("preview" if preview else "final")
     # speed: the frames go in a touch faster and come out at 30 fps, matching the sped-up mix (one encode)
@@ -405,10 +420,11 @@ def render(edit_path: Path, out: Path, model: str = "large-v3-turbo", preview: b
                 tt = p.t0 + k / FPS
                 canvas, cap_y, cap_a = frame_layout.draw(k, tt, next(ff_iter), cam_track.at(p.a - av + k / FPS),
                                                          fill * zoom * punch_at(tt))
-                captions.progress(canvas, (frame_i + 1) / (total * FPS), accent_bgr)
+                captions.progress(canvas, (frame_i + 1) / (total * FPS), accent_bgr,
+                                  thick=3 if theme == "editorial" else 6)
                 if hook is not None:
                     captions.blend(canvas, hook, W // 2, HOOK_Y)
-                cap = captions.caption_at(pages, tt, accent)
+                cap = captions.caption_at(pages, tt, cap_accent, theme)
                 if cap is not None and cap_a > 0.01:
                     captions.blend(canvas, cap, W // 2, cap_y, cap_a)
                 enc.stdin.write(canvas.tobytes())

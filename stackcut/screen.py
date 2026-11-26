@@ -2,6 +2,7 @@
 you're talking about, automatic zoom targets from on-screen activity, and privacy blur."""
 from __future__ import annotations
 
+from functools import lru_cache
 from pathlib import Path
 
 import cv2
@@ -17,9 +18,15 @@ def hex_bgr(h: str) -> tuple[int, int, int]:
 
 
 def background(w: int, h: int, colors: list[str], base: str) -> np.ndarray:
-    """Soft blurred gradient wallpaper: three colour glows on a dark base, plus a little grain."""
+    """Soft blurred gradient wallpaper: three colour glows on a dark base, plus a little grain.
+    Without colours (the editorial theme): flat paper in the base colour, a breath of light from
+    the top and fine grain, like a magazine page."""
     yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
     img = np.ones((h, w, 3), np.float32) * np.array(hex_bgr(base), np.float32)
+    if not colors:
+        img += (6.0 * (1 - yy / h) - 3.0)[..., None]
+        grain = np.random.default_rng(7).normal(0, 1.1, (h, w, 1)).astype(np.float32)
+        return np.clip(img + grain, 0, 255).astype(np.uint8)
     spots = [((0.17, 0.14), 0.48, 0.55), ((0.86, 0.33), 0.52, 0.40), ((0.52, 0.55), 0.59, 0.35)]
     for ((fx, fy), fr, a), col in zip(spots, colors):
         cx, cy, r = fx * w, fy * h, fr * w
@@ -27,6 +34,27 @@ def background(w: int, h: int, colors: list[str], base: str) -> np.ndarray:
         img = img * (1 - g) + np.array(hex_bgr(col), np.float32) * g
     grain = np.random.default_rng(7).normal(0, 2.0, (h, w, 1)).astype(np.float32)
     return np.clip(img + grain, 0, 255).astype(np.uint8)
+
+
+def is_light(base: str) -> bool:
+    b, g, r = hex_bgr(base)
+    return 0.114 * b + 0.587 * g + 0.299 * r > 150
+
+
+@lru_cache(maxsize=48)
+def _card_mask(w: int, h: int, r: int) -> tuple[np.ndarray, np.ndarray]:
+    mask = rounded_mask(w, h, r) if r > 0 else np.ones((h, w, 1), np.float32)
+    inner = np.pad(rounded_mask(w - 2, h - 2, max(1, r - 1)), ((1, 1), (1, 1), (0, 0))) if r > 0 else mask
+    return mask, (mask - inner) * 0.30
+
+
+def put_card(canvas: np.ndarray, img: np.ndarray, x: int, y: int, radius: int) -> None:
+    """A picture as a rounded card with a dark hairline (the editorial theme's face card)."""
+    h, w = img.shape[:2]
+    mask, edge = _card_mask(w, h, radius)
+    roi = canvas[y:y + h, x:x + w].astype(np.float32)
+    roi = img.astype(np.float32) * mask + roi * (1 - mask)
+    canvas[y:y + h, x:x + w] = (roi * (1 - edge)).astype(np.uint8)
 
 
 def rounded_mask(w: int, h: int, r: int, ss: int = 4) -> np.ndarray:
@@ -43,22 +71,29 @@ class Window:
     """Pre-computes the static parts (background with baked-in shadow, masks) once."""
 
     def __init__(self, canvas_w: int, canvas_h: int, x: int, y: int, w: int, h: int, radius: int,
-                 colors: list[str], base: str):
+                 colors: list[str], base: str, cards: list[tuple[int, int, int, int]] = ()):
+        """cards: more rounded cards on the same page (x, y, w, h) that get the window's shadow
+        (the editorial theme's face card)."""
         self.x, self.y, self.w, self.h = x, y, w, h
+        self.light = is_light(base)
         bg = background(canvas_w, canvas_h, colors, base)
-        a = rounded_mask(w, h, radius)[..., 0]
+        drop, soft, depth = (22, 34, 0.17) if self.light else (18, 26, 0.75)
         shadow = np.zeros((canvas_h, canvas_w), np.float32)
-        shadow[y + 18:y + 18 + h, x:x + w] = a[: max(0, min(h, canvas_h - y - 18))]
-        shadow = cv2.GaussianBlur(shadow, (0, 0), 26) * 0.75
+        for cx, cy, cw, ch in [(x, y, w, h), *cards]:
+            a = rounded_mask(cw, ch, radius)[..., 0]
+            rows = max(0, min(ch, canvas_h - cy - drop))
+            shadow[cy + drop:cy + drop + rows, cx:cx + cw] = a[:rows]
+        shadow = cv2.GaussianBlur(shadow, (0, 0), soft) * depth
         self.bg = (bg * (1 - shadow[..., None])).astype(np.uint8)
         self.mask = rounded_mask(w, h, radius)
-        inner = np.pad(rounded_mask(w - 4, h - 4, max(1, radius - 2)), ((2, 2), (2, 2), (0, 0)))
-        self.edge = (self.mask - inner) * 0.35
+        t = 1 if self.light else 2
+        inner = np.pad(rounded_mask(w - 2 * t, h - 2 * t, max(1, radius - t)), ((t, t), (t, t), (0, 0)))
+        self.edge = (self.mask - inner) * (0.30 if self.light else 0.35)
 
     def draw(self, canvas: np.ndarray, view: np.ndarray) -> None:
         roi = canvas[self.y:self.y + self.h, self.x:self.x + self.w].astype(np.float32)
         roi = view.astype(np.float32) * self.mask + roi * (1 - self.mask)
-        roi = roi * (1 - self.edge) + 255 * self.edge
+        roi = roi * (1 - self.edge) + (0 if self.light else 255) * self.edge
         canvas[self.y:self.y + self.h, self.x:self.x + self.w] = roi.astype(np.uint8)
 
 
