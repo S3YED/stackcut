@@ -15,6 +15,9 @@ import yaml
 from . import graphics
 
 DEFAULT_STYLE = {
+    "theme": "classic",                                   # "editorial": paper background, hairline cards, a serif
+                                                          # hook, quiet ink captions (the magazine look)
+    "caption_accent": None,                               # editorial: the caption keyword's colour (default: accent)
     "accent": "#0088ff",                                  # caption keyword pill and progress bar
     "background": ["#0088ff", "#6d5dfc", "#143cbe"],      # the three soft glows behind the window
     "base": "#0a1024",                                    # the dark wallpaper under them
@@ -27,6 +30,8 @@ DEFAULT_STYLE = {
     "music_start": 0.0,                                   # skip a track's quiet intro (seconds)
     "music_duck_db": 4,                                   # how far the bed dips while you talk
     "music_mid_cut_db": 4,                                # 1-4 kHz scooped out of the bed: it never sits on the voice
+    "sfx_pack": None,                                     # a folder of your own cue sounds: pop.wav, whoosh.wav, swish.wav,
+                                                          # impact.wav, tick.wav (e.g. rendered with earshot sfx)
     "sfx": True,                                          # soft impact on the first frame, pops on the hook and the end
     "tightness": "normal",                                # "tight": about 0.08 s between words at every cut
     "punch": False,                                       # face zooms in a little on key words (keeps a tired take moving)
@@ -36,6 +41,10 @@ DEFAULT_STYLE = {
                                                           # "light": the mic as is; "clean": FFmpeg denoise for a poor mic;
                                                           # "isolate": ElevenLabs Voice Isolator (ELEVENLABS_API_KEY)
     "denoise_db": 24,                                     # most noise "denoise" may remove; lower keeps more room air
+}
+THEMES = {
+    "classic": {},
+    "editorial": {"background": [], "base": "#F1EDE6", "accent": "#1F4D3A", "caption_accent": "#F0CF8A"},
 }
 VOICES = ("denoise", "light", "clean", "isolate")
 LAYOUTS = ("split", "talk", "multicam")
@@ -138,6 +147,9 @@ def load(path: Path) -> Edit:
     if not lines:
         raise SystemExit(f"{path.name} has no lines")
     style = dict(DEFAULT_STYLE)
+    if (d.get("style") or {}).get("theme", "classic") not in THEMES:
+        raise SystemExit(f"{path.name}: style.theme must be one of {', '.join(THEMES)}")
+    style.update(THEMES[(d.get("style") or {}).get("theme", "classic")])
     style.update(d.get("style") or {})
     style["face_grade"] = {**DEFAULT_STYLE["face_grade"], **(style.get("face_grade") or {})}
     if not 0.8 <= float(style["speed"]) <= 1.25:

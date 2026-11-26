@@ -127,7 +127,27 @@ DENOISED_AIR = ",equalizer=f=7000:t=h:w=0.7:g=2"   # gives back the ~2 dB of 4-1
 TARGET_LUFS, CEILING = -14.0, 10 ** (-1.5 / 20)   # Reels/TikTok loudness, true-peak ceiling -1.5 dB
 
 
-def sfx_track(dur: float, out: Path, cues: list[tuple[float, str]] = (), sr: int = 48000) -> Path:
+PACK_DB = {"impact": -10, "pop": -21, "whoosh": -25, "swish": -24, "tick": -24}   # peak level of each pack sound
+
+
+def _pack(folder: Path | None, sr: int) -> dict:
+    """Sounds from a folder (pop.wav, whoosh.wav, swish.wav, impact.wav, tick.wav; any may be missing),
+    mono at `sr`, each set to its level. Made for sounds rendered in code (earshot sfx): nothing to license."""
+    made = {}
+    for name, db in PACK_DB.items():
+        f = folder / f"{name}.wav" if folder else None
+        if f is None or not f.exists():
+            continue
+        raw = subprocess.run([media.ffmpeg(), "-v", "error", "-i", str(f), "-ac", "1", "-ar", str(sr), "-f", "f32le", "-"],
+                             capture_output=True, check=True).stdout
+        x = np.frombuffer(raw, np.float32)
+        if len(x):
+            made[name] = (x / max(1e-6, np.abs(x).max()) * 10 ** (db / 20)).astype(np.float32)
+    return made
+
+
+def sfx_track(dur: float, out: Path, cues: list[tuple[float, str]] = (), sr: int = 48000,
+              pack: Path | None = None) -> Path:
     """Small sound cues, synthesised (no sample libraries, nothing to license): a soft low impact
     under the first frame, a light pop as the hook sticker lands and a pop on the last frame.
     `cues` adds (seconds, "pop" | "whoosh"): a quieter pop as a graphic lands, a soft whoosh for a card."""
@@ -156,7 +176,11 @@ def sfx_track(dur: float, out: Path, cues: list[tuple[float, str]] = (), sr: int
         return (x / np.abs(x).max() * 10 ** (db / 20)).astype(np.float32)
 
     made = {"pop": pop(-22), "whoosh": whoosh(-27)}
-    for at, cue in ((0.0, impact()), (0.02, pop(-16)), (max(0.0, dur - 0.12), pop(-14)),
+    made["swish"], made["tick"] = made["whoosh"] * 0.8, pop(-28)
+    custom = _pack(pack, sr)
+    made.update(custom)
+    first = custom.get("impact", impact())
+    for at, cue in ((0.0, first), (0.02, made["pop"] * 1.6), (max(0.0, dur - 0.12), made["pop"] * 1.8),
                     *((t, made[k]) for t, k in cues if 0.3 < t < dur - 0.3)):
         i = int(at * sr)
         j = min(n, i + len(cue))
@@ -203,7 +227,7 @@ def duck_curve(voice: np.ndarray, depth_db: float, attack: float = 0.08, release
 def master(voice: Path, out: Path, music: Path | None = None, music_lufs: float = -32.0,
            cleaned: Path | None = None, sfx: bool = True, chain: str = "light", speed: float = 1.0,
            music_start: float = 0.0, duck_db: float = 4.0, mid_cut_db: float = 4.0,
-           cues: list[tuple[float, str]] = ()) -> dict:
+           cues: list[tuple[float, str]] = (), sfx_pack: Path | None = None) -> dict:
     """The voice (cleaned or the mic as is) through its chain, sped up if asked, set to -14 LUFS.
     Under it the music bed: its 1-4 kHz scooped out so it never sits on the voice, at `music_lufs`
     in the pauses and `duck_db` lower while he talks. Then the sound cues (with the graphics' `cues`),
@@ -228,7 +252,7 @@ def master(voice: Path, out: Path, music: Path | None = None, music_lufs: float 
         mix[: len(bed)] += bed
         report["bed_lufs"] = loudness(_write(bed, work / "bed_mixed.wav"))
     if sfx:
-        fx = _read(sfx_track(dur, work / "sfx.wav", cues))[: len(v)]
+        fx = _read(sfx_track(dur, work / "sfx.wav", cues, pack=sfx_pack))[: len(v)]
         mix[: len(fx)] += fx
     raw = _write(mix, work / "mix_raw.wav")
     media.run([media.ffmpeg(), "-v", "error", "-y", "-i", str(raw), "-af",

@@ -47,6 +47,7 @@ class Talk:
                  look: face.Look, accent: tuple[int, int, int], lang: str):
         self.graphics, self.look, self.accent, self.lang = gs, look, accent, lang
         self.bg = screen.background(W, H, style["background"], style["base"])
+        self.card = style.get("theme") == "editorial"
         self.fade = np.linspace(0.55, 0, 90, dtype=np.float32)[:, None, None]
         self.switches: list[tuple[float, tuple, tuple, bool]] = []
         segs = segments(gs, starts, cuts)
@@ -78,7 +79,11 @@ class Talk:
         s, xa, ya, closer = self.params(tt)
         ph = max(H - FACE_TOP, int(round(H - s * FACE_TOP)))
         canvas = self.bg.copy() if s > 0.002 or ff is None else np.empty((H, W, 3), np.uint8)
-        if ff is not None:
+        if ff is not None and self.card and s > 0.002:   # the face draws back into a card on the page
+            m = int(round(40 * s))
+            fp = self.look.panel(ff, cam, W - 2 * m, ph - m, fill * closer, ya, xa)
+            screen.put_card(canvas, fp, m, H - ph, int(round(28 * s)))
+        elif ff is not None:
             fp = self.look.panel(ff, cam, W, ph, fill * closer, ya, xa)
             if s > 0.002:     # the face panel's top edge melts into the gradient
                 top = fp[:90].astype(np.float32) * (1 - self.fade * s)

@@ -143,8 +143,9 @@ def fill(frame: np.ndarray, crop: list[float]) -> np.ndarray:
 class Multi:
     """Draws one frame of the multicam layout, by each line's view."""
 
-    def __init__(self, e, split, talk_draw, angles: dict[str, Angle], look, win_for_angles=None):
+    def __init__(self, e, split, talk_draw, angles: dict[str, Angle], look, win_for_angles=None, face_card=None):
         self.e, self.split, self.talk, self.angles, self.look = e, split, talk_draw, angles, look
+        self.card = face_card
         self.win = win_for_angles
         self.fade = np.linspace(0.55, 0, 90, dtype=np.float32)[:, None, None]
 
@@ -173,7 +174,10 @@ class Multi:
         canvas = self.win.bg.copy()
         if af is not None:
             self.win.draw(canvas, screen.view(af, *self.zoom, self.win.w, self.win.h))
-        if ff is not None:
+        if ff is not None and self.card:
+            x, y, w, h = self.card
+            screen.put_card(canvas, self.look.panel(ff, cam_at, w, h, fill_), x, y, 28)
+        elif ff is not None:
             fpanel = self.look.panel(ff, cam_at, W, H - FACE_TOP, fill_).astype(np.float32)
             fpanel[:90] *= 1 - self.fade
             canvas[FACE_TOP:] = fpanel.astype(np.uint8)
