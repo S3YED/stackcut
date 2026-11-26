@@ -185,6 +185,7 @@ lines:                            # face-take seconds, in the order they play
 | Style option | What it does |
 |---|---|
 | `top_crop` | Hide this fraction of the screen's top (a browser's tabs and address bar). |
+| `theme` | `classic` (default: the blurred gradient) or `editorial`: the magazine look. A flat paper page, the screen and your face as two rounded cards with a hairline and a soft shadow, a quieter hook label, ink caption labels with the keyword in `caption_accent`, a thin progress line. `base`, `accent` and `caption_accent` change its colours. |
 | `tightness` | `normal`, or `tight`: about 0.08 s between words at every cut. |
 | `speed` | 1.05-1.1 lifts a slow delivery. The pitch stays the same. |
 | `punch` | The face steps in a little on key words, at most every 2.2 s, so jump cuts read as beats. |
@@ -196,6 +197,7 @@ lines:                            # face-take seconds, in the order they play
 | `music_mid_cut_db` | How much of 1-4 kHz is scooped out of the bed so it never sits on the voice (default 4 dB). |
 | `music_start` | Skip a track's quiet intro (seconds). |
 | `sfx` | A soft impact on the first frame and small pops on the hook and the end (synthesised, nothing to license). |
+| `sfx_pack` | A folder with your own cue sounds: `pop.wav`, `whoosh.wav`, `swish.wav`, `impact.wav`, `tick.wav` (any may be missing). Made for sounds rendered in code, for example with [earshot](https://github.com/Leonxlnx/earshot): `earshot sfx render ui_pop/soft -o sfx/pop.wav`. In `multicam` a swish plays on every change of view. |
 
 Full examples: [`examples/php-multicam.yaml`](examples/php-multicam.yaml) (multicam: face, screen and a back shot of one take, a news reel with its fact notes), [`examples/talking-head-demo.yaml`](examples/talking-head-demo.yaml) (a talking head with graphics), [`examples/homepage.yaml`](examples/homepage.yaml) (English), [`examples/whatsapp-nl.yaml`](examples/whatsapp-nl.yaml) (Dutch, with a blurred client screen), and the launch videos [`examples/stackcut-launch.yaml`](examples/stackcut-launch.yaml) and [`examples/stackcut-launch-nl.yaml`](examples/stackcut-launch-nl.yaml) (a tired take made tight: best takes, speed, punch-ins, face grade).
 

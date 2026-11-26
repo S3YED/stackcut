@@ -77,6 +77,9 @@ Find every client name, phone number, email, message text, avatar and invoice on
 2. Add `privacy:` boxes `[x, y, w, h]` in screen pixels. Give each a `from`/`to` window (screen seconds) per layout, and overlap the windows by about 0.15 s at every change. A box that ends one frame early leaks.
 3. After rendering, check full-resolution frames of every `full` line and every zoom over a private area. Thumbnails hide leaks.
 
+## The look
+`style: {theme: editorial}` is the calm, premium look: paper page, two cards, quiet captions. Use it for founder and story videos; keep `classic` for loud product demos. With it, show every screen whole and centred (`zoom: full`, or a zoom whose width covers the whole page or text block): nothing cut off at the card's edge. Give it a sound pack (`sfx_pack`) so graphics and view changes land with a soft cue.
+
 ## 5. The hook sticker
 `hook:` is one line, about 28 characters, plus one emoji. Use one sentence: a full stop in the middle splits it into two lines. Make it blunt, a little provocative, and true to what is said. Examples:
 - "AI rebuilt my site overnight 😳"
